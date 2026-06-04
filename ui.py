@@ -120,12 +120,21 @@ class LedController(QWidget):
         self._status = QLabel("Ready. Run a scan.")
         self._status.setWordWrap(True)
 
+        footer = QLabel(
+            '<span style="color:gray">Built with ❤ by </span>'
+            '<a href="https://github.com/ugurcandede">@ugurcandede</a>'
+        )
+        footer.setTextFormat(Qt.TextFormat.RichText)
+        footer.setOpenExternalLinks(True)
+        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         root = QVBoxLayout(self)
         root.addWidget(self._list, 1)
         root.addWidget(list_hint)
         root.addLayout(btn_row)
         root.addWidget(self._controls)
         root.addWidget(self._status)
+        root.addWidget(footer)
 
     def _setup_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():

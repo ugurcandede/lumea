@@ -22,8 +22,6 @@ jobs:
             artifact: Lumea-windows
           - os: macos-14        # Apple Silicon (arm64)
             artifact: Lumea-macos-arm64
-          - os: macos-13        # Intel (x86_64)
-            artifact: Lumea-macos-x86_64
 
     steps:
       - uses: actions/checkout@v4
