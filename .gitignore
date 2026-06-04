@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Build output (PyInstaller, etc.)
+build/
+dist/
+*.spec
+assets/icon.icns
+icon.iconset/

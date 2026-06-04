@@ -1,0 +1,92 @@
+name: Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Lumea-windows
+          - os: macos-14        # Apple Silicon (arm64)
+            artifact: Lumea-macos-arm64
+          - os: macos-13        # Intel (x86_64)
+            artifact: Lumea-macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # PySide6/Pillow wheels lag on the newest Python; pin a known-good one
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build Windows .exe
+        if: runner.os == 'Windows'
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onefile \
+            --name Lumea \
+            --icon assets/icon.ico \
+            --add-data "assets/icon.png;assets" \
+            main.py
+
+      - name: Build macOS .app
+        if: runner.os == 'macOS'
+        run: |
+          # PyInstaller wants an .icns icon on macOS; build one from assets/icon.png.
+          mkdir -p icon.iconset
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size"               assets/icon.png --out "icon.iconset/icon_${size}x${size}.png"
+            sips -z "$((size*2))" "$((size*2))"   assets/icon.png --out "icon.iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns icon.iconset -o assets/icon.icns
+
+          pyinstaller --noconfirm --clean --windowed \
+            --name Lumea \
+            --icon assets/icon.icns \
+            --add-data "assets/icon.png:assets" \
+            main.py
+
+          # BLE app: macOS denies Bluetooth without a usage-description string in Info.plist.
+          plutil -insert NSBluetoothAlwaysUsageDescription \
+            -string "Lumea uses Bluetooth to control your LED strips." \
+            dist/Lumea.app/Contents/Info.plist
+
+          # Ad-hoc sign so the bundle isn't flagged as "damaged" (still NOT notarized).
+          codesign --force --deep --sign - dist/Lumea.app
+
+          # Zip the .app -- ditto preserves the bundle structure and symlinks.
+          ditto -c -k --keepParent dist/Lumea.app "dist/${{ matrix.artifact }}.zip"
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/Lumea.exe
+          if-no-files-found: error
+
+      - name: Upload macOS artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
