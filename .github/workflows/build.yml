@@ -1,6 +1,10 @@
 name: Build
 
 on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'           # skip builds for docs-only pushes
   workflow_dispatch:
 
 permissions:
