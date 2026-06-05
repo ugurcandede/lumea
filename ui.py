@@ -173,7 +173,7 @@ class LedController(QWidget):
         # Everything lives in a fixed-width column so wrap-able labels can never
         # widen the window; the outer SetFixedSize then pins width and fits height.
         content = QWidget()
-        content.setFixedWidth(480)
+        content.setFixedWidth(520)
         col = QVBoxLayout(content)
         col.setContentsMargins(20, 20, 20, 16)
         col.setSpacing(16)
