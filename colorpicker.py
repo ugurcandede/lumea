@@ -6,7 +6,7 @@ on every move (click or drag). The host debounces the actual BLE writes.
 
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 
 class _SVSquare(QWidget):
@@ -16,7 +16,10 @@ class _SVSquare(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(220, 180)
+        # Grows to the card width; height fixed so it stays a pleasant rectangle.
+        self.setFixedHeight(200)
+        self.setMinimumWidth(240)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._hue = 0
         self._sat = 0
@@ -77,7 +80,7 @@ class _HueBar(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(26, 180)
+        self.setFixedSize(28, 200)
         self._hue = 0
 
     def hue(self):
@@ -115,24 +118,31 @@ class _HueBar(QWidget):
 class ColorPicker(QWidget):
     colorChanged = Signal(QColor)
 
-    def __init__(self):
+    def __init__(self, show_preview=True):
         super().__init__()
+        self._show_preview = show_preview
         self._sv = _SVSquare()
         self._bar = _HueBar()
         self._swatch = QLabel()
-        self._swatch.setFixedHeight(26)
+        self._swatch.setFixedHeight(28)
         self._hex = QLabel()
+        self._hex.setObjectName("cardSub")  # muted readout, matches the theme
         self._sv.changed.connect(self._emit)
         self._bar.changed.connect(self._on_hue)
 
         top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
         top.addWidget(self._sv)
         top.addWidget(self._bar)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(10)
         root.addLayout(top)
-        root.addWidget(self._swatch)
-        root.addWidget(self._hex)
+        if show_preview:
+            # The host can hide these and show its own preview instead.
+            root.addWidget(self._swatch)
+            root.addWidget(self._hex)
 
     def color(self):
         return QColor.fromHsv(self._bar.hue(), self._sv.sat(), self._sv.val())
@@ -150,9 +160,12 @@ class ColorPicker(QWidget):
 
     def _emit(self):
         c = self.color()
-        self._swatch.setStyleSheet(f"background:{c.name()}; border:1px solid #444;")
-        self._hex.setText(
-            f"{c.name()}    R{c.red()} G{c.green()} B{c.blue()}    "
-            f"H{max(c.hue(), 0)} S{c.saturation()} V{c.value()}"
-        )
+        if self._show_preview:
+            self._swatch.setStyleSheet(
+                f"background:{c.name()}; border:1px solid #D6DCE5; border-radius:10px;"
+            )
+            self._hex.setText(
+                f"{c.name()}    R{c.red()} G{c.green()} B{c.blue()}    "
+                f"H{max(c.hue(), 0)} S{c.saturation()} V{c.value()}"
+            )
         self.colorChanged.emit(c)
