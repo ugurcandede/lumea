@@ -47,7 +47,8 @@ class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
         self.setWindowTitle("Lumea")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(480)
+        self.resize(520, 720)
 
         self._close_event = close_event
         self._settings = QSettings()
@@ -141,17 +142,32 @@ class LedController(QWidget):
             self._tray = None
             return
         self._tray = QSystemTrayIcon(self)
-        self._tray.setIcon(icon.make_icon(self._base_color))
+        self._tray.setIcon(self._tray_icon())
         self._tray.setToolTip("Lumea")
         menu = QMenu()
         menu.addAction("Show / Hide", self._toggle_window)
         menu.addAction("On", self._on_power_on)
         menu.addAction("Off", self._on_power_off)
         menu.addSeparator()
+        color_icon_action = menu.addAction("Color tray icon")
+        color_icon_action.setCheckable(True)
+        color_icon_action.setChecked(self._tray_color_icon)
+        color_icon_action.toggled.connect(self._on_toggle_tray_color_icon)
+        menu.addSeparator()
         menu.addAction("Quit", self._quit)
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
+
+    def _tray_icon(self):
+        # App icon by default; the colored dot reflecting the strip color is opt-in.
+        return icon.make_icon(self._base_color) if self._tray_color_icon else icon.app_icon()
+
+    def _on_toggle_tray_color_icon(self, checked):
+        self._tray_color_icon = checked
+        if self._tray is not None:
+            self._tray.setIcon(self._tray_icon())
+        self._save_state()
 
     # ---- device list -----------------------------------------------------
 
@@ -255,9 +271,8 @@ class LedController(QWidget):
 
     @asyncSlot()
     async def _on_color_timeout(self):
-        # Tray icon always updates (offline preview); only send if connected.
-        if self._tray is not None:
-            self._tray.setIcon(icon.make_icon(self._base_color))
+        if self._tray is not None and self._tray_color_icon:
+            self._tray.setIcon(self._tray_icon())
         targets = [a for a in self._selected if self._manager.is_connected(a)]
         if not targets:
             return
@@ -290,7 +305,7 @@ class LedController(QWidget):
         self._save_state()
         self._set_status(
             f"{len(devices)} device(s) found." if devices
-            else "No devices found. Is Bluetooth on? Try again."
+            else "No devices found."
         )
 
     @asyncSlot()
@@ -435,6 +450,7 @@ class LedController(QWidget):
         self._aliases = json.loads(self._settings.value("aliases_json", "{}"))
         self._selected = set(json.loads(self._settings.value("selected_json", "[]")))
         self._presets = json.loads(self._settings.value("presets_json", json.dumps(DEFAULT_PRESETS)))
+        self._tray_color_icon = self._settings.value("tray_color_icon", False, type=bool)
 
     def _save_state(self):
         self._settings.setValue("known_json", json.dumps(self._known))
@@ -442,3 +458,4 @@ class LedController(QWidget):
         self._settings.setValue("selected_json", json.dumps(list(self._selected)))
         self._settings.setValue("presets_json", json.dumps(self._presets))
         self._settings.setValue("color", self._base_color.name())
+        self._settings.setValue("tray_color_icon", self._tray_color_icon)
