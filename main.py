@@ -19,7 +19,7 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     # QSettings keys off these (Windows registry, no extra files).
-    app.setOrganizationName("elk-ble")
+    app.setOrganizationName("ugurcandede")
     app.setApplicationName("Lumea")
     app.setWindowIcon(icon.app_icon())
     # Closing the window hides to the tray; quit happens via the tray menu.

@@ -24,6 +24,12 @@ python main.py
 
 > If `pip install` fails on the newest Python, use a 3.11–3.13 interpreter (PySide6/Pillow wheels can lag).
 
+## Install
+
+| Windows                                                                                                                                         | macOS (Apple Silicon)                                                                     |
+|-------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
+| Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/latest), then run it.<br>SmartScreen → **More info → Run anyway**. | `brew tap ugurcandede/lumea`<br>`brew install --cask lumea`<br>Clears Gatekeeper for you. |
+
 ## Prerequisites
 
 - Python 3.11+
