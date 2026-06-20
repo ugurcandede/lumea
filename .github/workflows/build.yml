@@ -160,7 +160,7 @@ jobs:
             release/Lumea-macos-arm64.zip
           body: |
             Unsigned build.
-            - **macOS:** `brew install --cask ugurcandede/lumea/lumea` (the cask clears Gatekeeper for you), or download the zip and run `xattr -cr Lumea.app` once.
+            - **macOS:** `brew install --cask ugurcandede/tap/lumea` (the cask clears Gatekeeper for you), or download the zip and run `xattr -cr Lumea.app` once.
             - **Windows:** SmartScreen → More info → Run anyway.
 
             macOS arm64 zip SHA256: `${{ steps.sha.outputs.sha256 }}`
@@ -170,7 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/ugurcandede/homebrew-lumea.git" /tmp/tap
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/ugurcandede/homebrew-tap.git" /tmp/tap
           cd /tmp/tap
           sed -i "s|version \".*\"|version \"${{ steps.version.outputs.version }}\"|" Casks/lumea.rb
           sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha.outputs.sha256 }}\"|" Casks/lumea.rb

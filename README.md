@@ -26,9 +26,18 @@ python main.py
 
 ## Install
 
-| Windows                                                                                                                                         | macOS (Apple Silicon)                                                                     |
-|-------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
-| Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/latest), then run it.<br>SmartScreen → **More info → Run anyway**. | `brew tap ugurcandede/lumea`<br>`brew install --cask lumea`<br>Clears Gatekeeper for you. |
+### macOS (Apple Silicon)
+
+```bash
+brew tap ugurcandede/tap
+brew install --cask lumea
+```
+
+The cask clears Gatekeeper for you. To update later: `brew upgrade --cask lumea`.
+
+### Windows
+
+Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/latest) and run it. On the SmartScreen prompt, choose **More info → Run anyway**.
 
 ## Prerequisites
 
