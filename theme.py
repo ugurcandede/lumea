@@ -182,4 +182,20 @@ QMenu::item {
 }
 QMenu::item:selected { background-color: #EFF4FF; color: #1B2430; }
 QMenu::separator { height: 1px; background: #E9EDF3; margin: 5px 8px; }
+
+/* Brightness master dimmer: grey groove, blue fill, white handle. */
+QSlider#brightness::groove:horizontal {
+    height: 6px; border-radius: 3px; background: #E7ECF3;
+}
+QSlider#brightness::sub-page:horizontal {
+    height: 6px; border-radius: 3px; background: #2563EB;
+}
+QSlider#brightness::add-page:horizontal {
+    height: 6px; border-radius: 3px; background: #E7ECF3;
+}
+QSlider#brightness::handle:horizontal {
+    width: 18px; height: 18px; margin: -6px 0;
+    border-radius: 9px; background: #FFFFFF; border: 2px solid #2563EB;
+}
+QSlider#brightness::handle:horizontal:hover { border-color: #1D4ED8; }
 """
