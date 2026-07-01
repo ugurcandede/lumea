@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -44,6 +45,7 @@ RECONNECT_ATTEMPTS = 5
 RECONNECT_DELAY_S = 3.0
 COLOR_DEBOUNCE_MS = 80
 DEFAULT_COLOR = QColor(255, 255, 255)
+DEFAULT_BRIGHTNESS = 100
 DEFAULT_PRESETS = [
     "#ff0000", "#ff7a00", "#ffd400", "#7ed321", "#00c000", "#00c9a4",
     "#00bcd4", "#2563eb", "#7e22ce", "#ec4899", "#ff8a3d", "#ffffff",
@@ -348,6 +350,7 @@ class LedController(QWidget):
         box.addLayout(power_row)
         box.addLayout(color_head)
         box.addWidget(self._picker)
+        box.addLayout(self._build_brightness())
         box.addLayout(self._build_presets())
 
         self._update_power_visual()
@@ -483,6 +486,38 @@ class LedController(QWidget):
         else:
             self._update_hero(self._base_color)  # invalid/unchanged: restore readout
 
+    # ---- brightness ------------------------------------------------------
+
+    def _build_brightness(self):
+        # Master dimmer: scales the picked colour client-side (scaled_color).
+        # Independent of the picker's V axis, which also dims -- the two compound.
+        label = QLabel("Brightness")
+        label.setObjectName("fieldLabel")
+        self._brightness_value = QLabel(f"{self._brightness}%")
+        self._brightness_value.setObjectName("cardSub")
+        head = QHBoxLayout()
+        head.addWidget(label)
+        head.addStretch()
+        head.addWidget(self._brightness_value)
+
+        self._brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self._brightness_slider.setObjectName("brightness")
+        self._brightness_slider.setRange(0, 100)
+        self._brightness_slider.setValue(self._brightness)
+        self._brightness_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+
+        box = QVBoxLayout()
+        box.setSpacing(8)
+        box.addLayout(head)
+        box.addWidget(self._brightness_slider)
+        return box
+
+    def _on_brightness_changed(self, value):
+        self._brightness = value
+        self._brightness_value.setText(f"{value}%")
+        self._color_timer.start()  # debounced send, same path as colour changes
+
     # ---- color presets ---------------------------------------------------
 
     def _build_presets(self):
@@ -538,8 +573,9 @@ class LedController(QWidget):
         if not targets:
             return
         c = self._base_color
+        b = self._brightness
         results = await self._manager.apply(
-            targets, lambda d: d.set_color(c.red(), c.green(), c.blue())
+            targets, lambda d: d.set_color(c.red(), c.green(), c.blue(), b)
         )
         failed = [a for a, exc in results.items() if exc is not None]
         if failed:
@@ -739,6 +775,7 @@ class LedController(QWidget):
             presets += DEFAULT_PRESETS[len(presets):]
         self._presets = presets
         self._tray_color_icon = self._settings.value("tray_color_icon", False, type=bool)
+        self._brightness = self._settings.value("brightness", DEFAULT_BRIGHTNESS, type=int)
 
     def _save_state(self):
         self._settings.setValue("known_json", json.dumps(self._known))
@@ -747,3 +784,4 @@ class LedController(QWidget):
         self._settings.setValue("presets_json", json.dumps(self._presets))
         self._settings.setValue("color", self._base_color.name())
         self._settings.setValue("tray_color_icon", self._tray_color_icon)
+        self._settings.setValue("brightness", self._brightness)

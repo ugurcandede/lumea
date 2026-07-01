@@ -72,8 +72,10 @@ class ElkBledom:
     async def set_power(self, on: bool) -> None:
         await self._write(protocol.power(on))
 
-    async def set_color(self, r: int, g: int, b: int) -> None:
-        await self._write(protocol.color(r, g, b))
+    async def set_color(self, r: int, g: int, b: int, brightness: int = 100) -> None:
+        # brightness is client-side RGB scaling (scaled_color), not a device PWM
+        # command; brightness=100 yields the unmodified confirmed COLOR frame.
+        await self._write(protocol.scaled_color(r, g, b, brightness))
 
     async def _write(self, data: bytes) -> None:
         if self._write_char is None:
