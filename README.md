@@ -52,7 +52,7 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
 1. **Scan** — lists nearby strips.
 2. **Tick** the devices you want, then press **Connect Selected**. Double-click a row to set an **alias**.
 3. **On / Off** and the **color picker** (live) — commands go to every checked-and-connected device at once.
-4. **Presets** — the 5 swatches: left-click applies, right-click saves the current color.
+4. **Presets** — the 12 swatches: left-click applies, right-click saves the current color.
 5. **Disconnect All** drops every connection.
 
 Closing the window keeps the app in the **system tray**. Checked devices, aliases, presets and the last color are saved
@@ -62,7 +62,7 @@ and restored on launch, and dropped links auto-reconnect.
 
 - Control **multiple strips at once**
 - Per-device **aliases**
-- **Live color** picker with 5 savable **presets**
+- **Live color** picker with 12 savable **presets**
 - **System tray** — runs in the background, icon reflects the current color
 - Settings persistence and auto-reconnect
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless

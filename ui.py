@@ -719,6 +719,26 @@ class LedController(QWidget):
             if self._is_synced(controller):
                 self._push_one(controller)
 
+    def _set_local_power(self, on):
+        # Locals have no power frame: off sends black (and pauses the MSI rainbow),
+        # on re-applies the picker colour (or resumes the rainbow). Returns True if
+        # any synced controller was driven.
+        targets = [c for c in self._locals if self._is_synced(c)]
+        for controller in targets:
+            if on:
+                if controller is self._msi and self._msi_effect == "rainbow":
+                    self._effect_timer.start()
+                else:
+                    self._push_one(controller)
+            else:
+                if controller is self._msi:
+                    self._effect_timer.stop()
+                try:
+                    controller.set_color(0, 0, 0)
+                except Exception:
+                    log.exception("%s power-off send failed", controller.name)
+        return bool(targets)
+
     def _on_local_sync_toggled(self, controller, checked):
         self._local_sync[controller.card_id] = checked
         self._save_state()
@@ -880,10 +900,19 @@ class LedController(QWidget):
 
     async def _set_power(self, on):
         # No readback: keep an optimistic state and only adopt it if the send
-        # actually reached a device.
-        if await self._broadcast(
-            lambda d: d.set_power(on), "Turned on." if on else "Turned off."
-        ):
+        # actually reached a device. Local USB controllers are covered too.
+        local_ok = self._set_local_power(on)
+        if [a for a in self._selected if self._manager.is_connected(a)]:
+            ble_ok = await self._broadcast(
+                lambda d: d.set_power(on), "Turned on." if on else "Turned off."
+            )
+        else:
+            ble_ok = False
+            self._set_status(
+                ("Turned on." if on else "Turned off.") if local_ok
+                else "No checked-and-connected device."
+            )
+        if ble_ok or local_ok:
             self._power_on = on
             self._update_power_visual()
 
@@ -965,8 +994,10 @@ class LedController(QWidget):
         self._tray_color_icon = self._settings.value("tray_color_icon", False, type=bool)
         self._brightness = self._settings.value("brightness", DEFAULT_BRIGHTNESS, type=int)
         self._local_sync = json.loads(self._settings.value("local_sync_json", "{}"))
-        if self._settings.contains("msi_sync") and "msi-mystic-light" not in self._local_sync:
-            self._local_sync["msi-mystic-light"] = self._settings.value("msi_sync", False, type=bool)
+        if self._settings.contains("msi_sync"):  # migrate the pre-SteelSeries key, then drop it
+            if "msi-mystic-light" not in self._local_sync:
+                self._local_sync["msi-mystic-light"] = self._settings.value("msi_sync", False, type=bool)
+            self._settings.remove("msi_sync")
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
 
     def _save_state(self):
