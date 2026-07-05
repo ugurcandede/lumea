@@ -45,6 +45,7 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
 - A strip advertising as `ELK-BLE`, `MELK`, or `ELK-BULB`
 - Bluetooth turned on
 - *(optional, MSI motherboard RGB)* an MSI board with a Mystic Light USB controller — driven via `hidapi` (installed on Windows by `requirements.txt`)
+- *(optional, SteelSeries RGB)* a SteelSeries Apex 3 keyboard and/or Rival 650 mouse — same driverless `hidapi` path
 
 ## Usage
 
@@ -65,6 +66,7 @@ and restored on launch, and dropped links auto-reconnect.
 - **System tray** — runs in the background, icon reflects the current color
 - Settings persistence and auto-reconnect
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
+- **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
 
 ## MSI motherboard RGB (optional · Windows)
 
@@ -75,12 +77,21 @@ If your PC is an MSI board with a **Mystic Light** USB controller, Lumea can con
 - **Case fans:** if they run off a case controller (e.g. MSI Gungnir), set that controller to **motherboard control** (JARGB) mode so they follow Lumea.
 - Verified on an **MSI MPG Z790 CARBON WIFI**. Same-variant Mystic Light USB boards should work; anything else is detected and left untouched.
 
+## SteelSeries RGB (optional · Windows)
+
+If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea can drive its lighting too — no SteelSeries GG, no driver. Each appears as its own device row (**SteelSeries Apex 3** / **SteelSeries Rival 650**, always "Connected"); tick it to mirror the color picker to that device.
+
+- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/), the same optional dependency as the MSI path.
+- **Static color only**, following the picker. No brick risk (plain HID output reports; nothing is written to onboard flash).
+- Verified on an **Apex 3** and a **Rival 650**. Other SteelSeries models are detected and left alone.
+
 ## Layout
 
 ```
 main.py          entry point: QApplication + qasync event loop
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
 msi_mystic.py    optional MSI Mystic Light (USB HID) backend
+steelseries.py   optional SteelSeries Apex 3 / Rival 650 (USB HID) backend
 ui.py            LedController: device list, color, presets, system tray
 colorpicker.py   embedded SV-square + hue-bar color picker
 icon.py          app icon + dynamic tray icon
@@ -96,5 +107,5 @@ protocol.py      pure command encoders
 </p>
 
 <p align="center">
-  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices, or with MSI / Mystic Light.</sub>
+  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices, or with MSI / Mystic Light or SteelSeries.</sub>
 </p>

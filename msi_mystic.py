@@ -57,6 +57,13 @@ class MysticLight:
     no asyncio needed. Like the BLE strips, the device is never read back for state.
     """
 
+    # Common local-controller interface (shared with steelseries.py) so the UI can
+    # list every USB device the same way. MSI alone supports the software rainbow.
+    card_id = "msi-mystic-light"
+    name = "MSI Mystic Light"
+    subtitle = "Motherboard · USB"
+    effect = True
+
     def __init__(self, path):
         self._dev = hid.device()
         self._dev.open_path(path)
