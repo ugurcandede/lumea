@@ -39,6 +39,7 @@ import ble
 import colorpicker
 import icon
 import msi_mystic
+import steelseries
 
 log = logging.getLogger(__name__)
 
@@ -56,9 +57,6 @@ DEFAULT_PRESETS = [
     "#00bcd4", "#2563eb", "#7e22ce", "#ec4899", "#ff8a3d", "#ffffff",
 ]
 PRESET_COLUMNS = 6
-MSI_CARD_ID = "msi-mystic-light"
-MSI_CARD_NAME = "MSI Mystic Light"
-MSI_CARD_SUB = "Motherboard · USB"
 
 
 def _repolish(widget):
@@ -226,10 +224,12 @@ class LedController(QWidget):
         self._settings = QSettings()
         self._manager = ble.DeviceManager(on_disconnect=self._on_device_disconnect)
         self._msi = msi_mystic.open_controller()  # None unless an MSI board is present
+        # Every local USB controller (MSI + SteelSeries), each shown as a Devices row.
+        self._locals = ([self._msi] if self._msi is not None else []) + steelseries.open_controllers()
         self._desired: set[str] = set()       # addresses we want connected
         self._reconnecting: set[str] = set()
         self._cards: dict[str, _DeviceCard] = {}
-        self._msi_card = None
+        self._local_cards: dict[str, _DeviceCard] = {}
         self._power_on = False                 # optimistic: last command sent
         self._msi_effect = "static"            # MSI mode: "static" (picker) or "rainbow"
         self._effect_hue = 0.0
@@ -251,9 +251,8 @@ class LedController(QWidget):
             self._desired = set(self._selected)
             asyncio.ensure_future(self._connect_many(list(self._desired)))
 
-        # Restore the MSI motherboard to the last colour if sync was left on.
-        if self._msi is not None and self._msi_sync:
-            self._push_msi_color()
+        # Restore every synced local controller to the last colour.
+        self._push_local_colors()
 
     # ---- construction ----------------------------------------------------
 
@@ -483,36 +482,39 @@ class LedController(QWidget):
         return self._aliases.get(address) or self._known.get(address) or address
 
     def _rebuild_list(self):
-        # Drop every existing card, then rebuild: the MSI controller first (if
-        # present), then the BLE strips sorted by display name.
+        # Drop every existing card, then rebuild: the local USB controllers first
+        # (MSI + SteelSeries), then the BLE strips sorted by display name.
         for card in self._cards.values():
             card.deleteLater()
         self._cards.clear()
-        self._msi_card = None
+        self._local_cards.clear()
         while self._device_vbox.count() > 1:  # keep the trailing stretch
             item = self._device_vbox.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        if not self._known and self._msi is None:
+        if not self._known and not self._locals:
             empty = QLabel("No devices yet. Run a scan.")
             empty.setObjectName("hint")
             self._device_vbox.insertWidget(0, empty)
             self._fit_device_scroll()
             return
 
-        count = 0
-        if self._msi is not None:
+        for controller in self._locals:
             # A local USB device: always "connected", no scan/connect needed. Its
             # checkbox is the colour-mirror toggle (ticked = in the control group).
-            self._msi_card = _DeviceCard(MSI_CARD_ID, MSI_CARD_NAME, self._msi_sync, MSI_CARD_SUB)
-            self._msi_card.toggled.connect(lambda _a, checked: self._on_msi_sync_toggled(checked))
-            self._msi_card.set_effect_menu(
-                self._msi_effect, self._on_msi_effect_changed,
-                self._effect_speed, self._on_speed_changed,
-            )
-            self._msi_card.set_connected(True)
-            self._device_vbox.insertWidget(self._device_vbox.count() - 1, self._msi_card)
+            card = _DeviceCard(controller.card_id, controller.name,
+                               self._is_synced(controller), controller.subtitle)
+            card.toggled.connect(
+                lambda _a, checked, c=controller: self._on_local_sync_toggled(c, checked))
+            if controller.effect:      # only MSI: the Static/Rainbow menu + speed slider
+                card.set_effect_menu(
+                    self._msi_effect, self._on_msi_effect_changed,
+                    self._effect_speed, self._on_speed_changed,
+                )
+            card.set_connected(True)
+            self._local_cards[controller.card_id] = card
+            self._device_vbox.insertWidget(self._device_vbox.count() - 1, card)
 
         for address in sorted(self._known, key=lambda a: self._display(a).lower()):
             card = _DeviceCard(address, self._display(address), address in self._selected)
@@ -528,7 +530,7 @@ class LedController(QWidget):
         # past a cap so a long list can't take over the window. The MSI card is
         # taller while it shows the rainbow speed slider.
         row_h, gap, cap = 66, 8, 5
-        count = len(self._known) + (1 if self._msi is not None else 0)
+        count = len(self._known) + len(self._locals)
         shown = min(max(count, 1), cap)
         extra = 56 if (self._msi is not None and self._msi_effect == "rainbow") else 0
         self._device_scroll.setFixedHeight(shown * row_h + (shown - 1) * gap + extra)
@@ -544,8 +546,8 @@ class LedController(QWidget):
         # Power + colour need a live BLE link; but when an MSI controller is present
         # the colour editor is useful on its own (it can drive the motherboard).
         connected = self._manager.connected_addresses()
-        count = len(connected) + (1 if self._msi is not None else 0)
-        self._controls.setVisible(bool(connected) or self._msi is not None)
+        count = len(connected) + len(self._locals)
+        self._controls.setVisible(bool(connected) or bool(self._locals))
         self._conn_chip.setText(f"{count} connected" if count else "Not connected")
         self._conn_chip.setProperty("connected", "true" if count else "false")
         _repolish(self._conn_chip)
@@ -682,7 +684,7 @@ class LedController(QWidget):
     async def _send_base_color(self):
         if self._tray is not None and self._tray_color_icon:
             self._tray.setIcon(self._tray_icon())
-        self._push_msi_color()  # mirror to the motherboard even with no BLE target
+        self._push_local_colors()  # mirror to every synced USB controller
         targets = [a for a in self._selected if self._manager.is_connected(a)]
         if not targets:
             return
@@ -697,6 +699,39 @@ class LedController(QWidget):
 
     # ---- rainbow effect --------------------------------------------------
 
+    def _is_synced(self, controller):
+        return self._local_sync.get(controller.card_id, False)
+
+    def _push_one(self, controller):
+        # Send the picker colour to one local controller. MSI is skipped while it
+        # runs its own rainbow (the effect drives it instead of the picker).
+        if controller is self._msi and self._msi_effect != "static":
+            return
+        c = self._base_color
+        try:
+            controller.set_color(c.red(), c.green(), c.blue(), self._brightness)
+        except Exception:
+            log.exception("%s color send failed", controller.name)
+            self._set_status(f"{controller.name}: color send failed.")
+
+    def _push_local_colors(self):
+        for controller in self._locals:
+            if self._is_synced(controller):
+                self._push_one(controller)
+
+    def _on_local_sync_toggled(self, controller, checked):
+        self._local_sync[controller.card_id] = checked
+        self._save_state()
+        if controller is self._msi:
+            if not checked:
+                self._effect_timer.stop()
+                return
+            if self._msi_effect == "rainbow":
+                self._effect_timer.start()
+                return
+        if checked:
+            self._push_one(controller)  # apply the current colour right away
+
     def _on_msi_effect_changed(self, mode):
         self._set_msi_effect(mode)
 
@@ -706,11 +741,11 @@ class LedController(QWidget):
         if mode == "rainbow":
             hue = self._base_color.hueF()          # continue from the current colour
             self._effect_hue = hue if hue >= 0 else 0.0
-            if self._msi_sync:
+            if self._is_synced(self._msi):
                 self._effect_timer.start()
         else:                                      # static: hand MSI back to the picker
             self._effect_timer.stop()
-            self._push_msi_color()
+            self._push_one(self._msi)
 
     def _effect_step(self):
         # Map Speed 1..100 to the hue advance per tick.
@@ -718,8 +753,8 @@ class LedController(QWidget):
 
     def _effect_tick(self):
         # MSI-only software rainbow: stream a hue sweep to the motherboard while the
-        # BLE strips keep the picker colour.
-        if self._msi is None or not self._msi_sync:
+        # BLE strips and other USB devices keep the picker colour.
+        if self._msi is None or not self._is_synced(self._msi):
             return
         self._effect_hue = (self._effect_hue + self._effect_step()) % 1.0
         color = QColor.fromHsvF(self._effect_hue, 1.0, 1.0)
@@ -727,28 +762,6 @@ class LedController(QWidget):
             self._msi.set_color(color.red(), color.green(), color.blue(), self._brightness)
         except Exception:
             log.exception("MSI effect send failed")
-
-    def _on_msi_sync_toggled(self, checked):
-        self._msi_sync = checked
-        self._save_state()
-        if not checked:
-            self._effect_timer.stop()
-            return
-        if self._msi_effect == "rainbow":
-            self._effect_timer.start()
-        else:
-            self._push_msi_color()  # apply the current colour right away
-
-    def _push_msi_color(self):
-        # Static path: drive MSI from the picker only when it isn't running rainbow.
-        if self._msi is None or not self._msi_sync or self._msi_effect != "static":
-            return
-        c = self._base_color
-        try:
-            self._msi.set_color(c.red(), c.green(), c.blue(), self._brightness)
-        except Exception:
-            log.exception("MSI color send failed")
-            self._set_status("MSI motherboard: color send failed.")
 
     # ---- scan / connect --------------------------------------------------
 
@@ -903,14 +916,14 @@ class LedController(QWidget):
         self.raise_()
         self.activateWindow()
 
-    def _close_msi(self):
-        if self._msi is not None:
-            self._msi.close()
+    def _close_locals(self):
+        for controller in self._locals:
+            controller.close()
 
     def _quit(self):
         self._closing = True
         self._save_state()
-        self._close_msi()
+        self._close_locals()
         self._close_event.set()
 
     def closeEvent(self, event):
@@ -927,7 +940,7 @@ class LedController(QWidget):
             return
         self._closing = True
         self._save_state()
-        self._close_msi()
+        self._close_locals()
         self._close_event.set()
         super().closeEvent(event)
 
@@ -951,7 +964,9 @@ class LedController(QWidget):
         self._presets = presets
         self._tray_color_icon = self._settings.value("tray_color_icon", False, type=bool)
         self._brightness = self._settings.value("brightness", DEFAULT_BRIGHTNESS, type=int)
-        self._msi_sync = self._settings.value("msi_sync", False, type=bool)
+        self._local_sync = json.loads(self._settings.value("local_sync_json", "{}"))
+        if self._settings.contains("msi_sync") and "msi-mystic-light" not in self._local_sync:
+            self._local_sync["msi-mystic-light"] = self._settings.value("msi_sync", False, type=bool)
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
 
     def _save_state(self):
@@ -962,5 +977,5 @@ class LedController(QWidget):
         self._settings.setValue("color", self._base_color.name())
         self._settings.setValue("tray_color_icon", self._tray_color_icon)
         self._settings.setValue("brightness", self._brightness)
-        self._settings.setValue("msi_sync", self._msi_sync)
+        self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
         self._settings.setValue("effect_speed", self._effect_speed)
