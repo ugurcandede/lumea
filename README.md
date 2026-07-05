@@ -96,5 +96,5 @@ protocol.py      pure command encoders
 </p>
 
 <p align="center">
-  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices.</sub>
+  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices, or with MSI / Mystic Light.</sub>
 </p>
