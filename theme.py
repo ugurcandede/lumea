@@ -101,6 +101,18 @@ QPushButton#pill:hover { border-color: #2563EB; color: #2563EB; }
 QPushButton#pill:pressed { background-color: #F1F4F9; }
 QPushButton#pill:disabled { color: #B5BDC8; border-color: #E5E9F0; }
 
+/* Compact per-device effect dropdown (Static / Rainbow) inside a device row. */
+QPushButton#effectMenu {
+    background: #FFFFFF;
+    color: #41505F;
+    border: 1px solid #D6DCE5;
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#effectMenu:hover { border-color: #2563EB; color: #2563EB; }
+
 /* Device rows: light inset panels inside the white card → clear separation.
    Blue-tinted with a blue border when ticked into the control group. */
 QFrame#deviceRow {

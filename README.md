@@ -44,6 +44,7 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
 - Python 3.11+
 - A strip advertising as `ELK-BLE`, `MELK`, or `ELK-BULB`
 - Bluetooth turned on
+- *(optional, MSI motherboard RGB)* an MSI board with a Mystic Light USB controller — driven via `hidapi` (installed on Windows by `requirements.txt`)
 
 ## Usage
 
@@ -63,12 +64,23 @@ and restored on launch, and dropped links auto-reconnect.
 - **Live color** picker with 5 savable **presets**
 - **System tray** — runs in the background, icon reflects the current color
 - Settings persistence and auto-reconnect
+- **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
+
+## MSI motherboard RGB (optional · Windows)
+
+If your PC is an MSI board with a **Mystic Light** USB controller, Lumea can control its RGB too — no MSI Center, no kernel driver. The controller appears in the device list as **MSI Mystic Light** (always "Connected"); tick it to mirror the color picker to the motherboard and any RGB/ARGB headers, alongside your BLE strips.
+
+- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/) (an optional dependency, Windows only).
+- **Static color only.** Lumea never sends firmware effect/mode bytes — those are undocumented and have bricked some boards. Writes are volatile, so a reboot restores your BIOS lighting.
+- **Case fans:** if they run off a case controller (e.g. MSI Gungnir), set that controller to **motherboard control** (JARGB) mode so they follow Lumea.
+- Verified on an **MSI MPG Z790 CARBON WIFI**. Same-variant Mystic Light USB boards should work; anything else is detected and left untouched.
 
 ## Layout
 
 ```
 main.py          entry point: QApplication + qasync event loop
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
+msi_mystic.py    optional MSI Mystic Light (USB HID) backend
 ui.py            LedController: device list, color, presets, system tray
 colorpicker.py   embedded SV-square + hue-bar color picker
 icon.py          app icon + dynamic tray icon
@@ -84,5 +96,5 @@ protocol.py      pure command encoders
 </p>
 
 <p align="center">
-  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices.</sub>
+  <sub>Not affiliated with the makers of ELK-BLEDOM / MELK devices, or with MSI / Mystic Light.</sub>
 </p>
