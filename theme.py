@@ -125,6 +125,13 @@ QFrame#deviceRow[selected="true"] {
     background-color: #EAF1FE;
     border: 1px solid #2563EB;
 }
+/* A saved strip absent from the last scan: dimmed, clearly inactive. */
+QFrame#deviceRow[unavailable="true"] {
+    background-color: #F1F3F7;
+    border-color: #EAEDF2;
+}
+QFrame#deviceRow[unavailable="true"] QLabel#cardTitle { color: #A3ABB7; }
+QFrame#deviceRow[unavailable="true"] QLabel#cardSub { color: #B4BAC5; }
 
 QScrollArea#deviceScroll { background: transparent; border: none; }
 QScrollArea#deviceScroll > QWidget > QWidget { background: transparent; }
@@ -149,6 +156,7 @@ QCheckBox::indicator:checked {
     border-color: #2563EB;
     image: none;
 }
+QCheckBox::indicator:disabled { background: #EDEFF3; border-color: #DDE2EA; }
 
 QLabel#chip {
     font-size: 12px;
@@ -159,6 +167,7 @@ QLabel#chip {
     color: #6B7785;
 }
 QLabel#chip[connected="true"] { background-color: #E4F6EC; color: #1B7F4B; }
+QLabel#chip[stale="true"] { background-color: #ECEEF2; color: #9AA4B1; }
 
 /* Rename popup + tray menu inherit the app sheet — keep them on-brand. */
 QLineEdit {

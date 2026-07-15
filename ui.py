@@ -46,6 +46,9 @@ log = logging.getLogger(__name__)
 RECONNECT_ATTEMPTS = 5
 RECONNECT_DELAY_S = 3.0
 COLOR_DEBOUNCE_MS = 80
+# Drop the BLE links after this much idle so they stop contending with BT audio;
+# the next command reconnects (see _wake). Local USB controllers are unaffected.
+IDLE_DISCONNECT_MS = 60_000
 EFFECT_INTERVAL_MS = 80
 EFFECT_MIN_STEP = 0.004        # hue advance/tick at Speed 1 (~20 s per rainbow cycle)
 EFFECT_MAX_STEP = 0.05         # at Speed 100 (~1.6 s per cycle)
@@ -74,17 +77,43 @@ def _card_shadow(widget):
     widget.setGraphicsEffect(shadow)
 
 
+class _ElideLabel(QLabel):
+    """Single-line label that elides with '…' instead of forcing its row wider.
+    Ignored width policy so a long address can't push a device row past the fixed
+    window width (which would let the trackpad scroll the list horizontally)."""
+
+    def __init__(self, text=""):
+        super().__init__(text)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text):
+        self._full = text
+        self._elide()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide()
+
+    def _elide(self):
+        fm = self.fontMetrics()
+        super().setText(fm.elidedText(self._full, Qt.TextElideMode.ElideRight, self.width()))
+
+
 class _DeviceCard(QFrame):
     """One strip as an inset row: a checkbox (= in the control group, tinted blue
     when ticked), the name/address, and a connection chip. Double-click to rename."""
 
     toggled = Signal(str, bool)
     renameRequested = Signal(str)
+    removeRequested = Signal(str)
 
-    def __init__(self, address, name, checked, sub=None):
+    def __init__(self, address, name, checked, sub=None, removable=True):
         super().__init__()
         self.setObjectName("deviceRow")
         self._address = address
+        self._removable = removable
+        self._selected_pref = checked  # in the control group? (survives going stale)
         self.setProperty("selected", "true" if checked else "false")
 
         self._check = QCheckBox()
@@ -92,9 +121,9 @@ class _DeviceCard(QFrame):
         self._check.setCursor(Qt.CursorShape.PointingHandCursor)
         self._check.toggled.connect(self._on_check)
 
-        self._name = QLabel(name)
+        self._name = _ElideLabel(name)
         self._name.setObjectName("cardTitle")
-        self._sub = QLabel(sub if sub is not None else address)
+        self._sub = _ElideLabel(sub if sub is not None else address)
         self._sub.setObjectName("cardSub")
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
@@ -120,9 +149,10 @@ class _DeviceCard(QFrame):
         outer.addLayout(row)
         self._outer = outer
 
-        self.set_connected(False)
+        self.set_status(False)
 
     def _on_check(self, checked):
+        self._selected_pref = checked
         self.setProperty("selected", "true" if checked else "false")
         _repolish(self)
         self.toggled.emit(self._address, checked)
@@ -130,13 +160,39 @@ class _DeviceCard(QFrame):
     def set_name(self, name):
         self._name.setText(name)
 
-    def set_connected(self, on):
-        self._chip.setText("Connected" if on else "Offline")
-        self._chip.setProperty("connected", "true" if on else "false")
+    def set_status(self, connected, in_range=True, selectable=True):
+        # Three states: Connected (live GATT link), Offline (reachable but not
+        # connected), Not in range (known but absent from the last scan -> dimmed).
+        stale = not connected and not in_range
+        self._chip.setText(
+            "Connected" if connected else "Offline" if in_range else "Not in range"
+        )
+        self._chip.setProperty("connected", "true" if connected else "false")
+        self._chip.setProperty("stale", "true" if stale else "false")
         _repolish(self._chip)
+        self.setProperty("unavailable", "true" if stale else "false")
+        # Only a strip confirmed present this session (connected or found by a scan)
+        # can join the control group: otherwise lock the checkbox and show it
+        # unticked, but keep the user's choice for when the strip turns up.
+        want = self._selected_pref and selectable
+        self._check.setEnabled(selectable)
+        if self._check.isChecked() != want:
+            self._check.blockSignals(True)   # display-only: don't mutate _selected
+            self._check.setChecked(want)
+            self._check.blockSignals(False)
+        self.setProperty("selected", "true" if want else "false")
+        _repolish(self)
 
     def mouseDoubleClickEvent(self, _event):
         self.renameRequested.emit(self._address)
+
+    def contextMenuEvent(self, event):
+        # BLE rows only: forget a saved strip (locals are USB, always present).
+        if not self._removable:
+            return
+        menu = QMenu(self)
+        menu.addAction("Remove", lambda: self.removeRequested.emit(self._address))
+        menu.exec(event.globalPos())
 
     def set_effect_menu(self, mode, callback, speed, speed_callback):
         """Static/Rainbow dropdown on the row + a Speed slider below it, shown
@@ -227,6 +283,8 @@ class LedController(QWidget):
         # Every local USB controller (MSI + SteelSeries), each shown as a Devices row.
         self._locals = ([self._msi] if self._msi is not None else []) + steelseries.open_controllers()
         self._desired: set[str] = set()       # addresses we want connected
+        self._in_range: set[str] = set()      # addresses seen in the last scan this session
+        self._scanned = False                 # any scan run yet? (before one, range is unknown)
         self._reconnecting: set[str] = set()
         self._cards: dict[str, _DeviceCard] = {}
         self._local_cards: dict[str, _DeviceCard] = {}
@@ -236,6 +294,11 @@ class LedController(QWidget):
         self._effect_timer = QTimer(self)
         self._effect_timer.setInterval(EFFECT_INTERVAL_MS)
         self._effect_timer.timeout.connect(self._effect_tick)
+        self._idle = False                     # True once we've released links to idle
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(IDLE_DISCONNECT_MS)
+        self._idle_timer.timeout.connect(self._on_idle)
         self._closing = False
 
         self._load_state()
@@ -246,10 +309,9 @@ class LedController(QWidget):
         self._rebuild_list()
         self._update_controls_visibility()
 
-        # Reconnect to whatever was ticked last session.
-        if self._selected:
-            self._desired = set(self._selected)
-            asyncio.ensure_future(self._connect_many(list(self._desired)))
+        # Don't auto-connect on launch: opening the app (it lives in the tray)
+        # must not seize Bluetooth. The user scans + connects when they want to
+        # control the strips; commands reconnect on demand after an idle release.
 
         # Restore every synced local controller to the last colour.
         self._push_local_colors()
@@ -481,6 +543,27 @@ class LedController(QWidget):
     def _display(self, address):
         return self._aliases.get(address) or self._known.get(address) or address
 
+    def _reachable(self, address):
+        # Reachable if connected, or seen in the last scan. Before any scan this
+        # session range is unknown, so don't flag anything as out of range yet.
+        return (self._manager.is_connected(address)
+                or not self._scanned
+                or address in self._in_range)
+
+    def _present(self, address):
+        # Confirmed here this session: connected, or found by a scan. Before any
+        # scan nothing is confirmed, so rows aren't selectable until the user scans.
+        return self._manager.is_connected(address) or address in self._in_range
+
+    def _connectable(self):
+        # Ticked, found in the current session's scan, not already linked. Empty
+        # until a scan runs -- so the user must Scan before Connect does anything
+        # (opening the app must never silently seize Bluetooth).
+        if not self._scanned:
+            return set()
+        return {a for a in self._selected if a in self._in_range} \
+            - self._manager.connected_addresses()
+
     def _rebuild_list(self):
         # Drop every existing card, then rebuild: the local USB controllers first
         # (MSI + SteelSeries), then the BLE strips sorted by display name.
@@ -498,13 +581,15 @@ class LedController(QWidget):
             empty.setObjectName("hint")
             self._device_vbox.insertWidget(0, empty)
             self._fit_device_scroll()
+            self._update_controls_visibility()
             return
 
         for controller in self._locals:
             # A local USB device: always "connected", no scan/connect needed. Its
             # checkbox is the colour-mirror toggle (ticked = in the control group).
             card = _DeviceCard(controller.card_id, controller.name,
-                               self._is_synced(controller), controller.subtitle)
+                               self._is_synced(controller), controller.subtitle,
+                               removable=False)
             card.toggled.connect(
                 lambda _a, checked, c=controller: self._on_local_sync_toggled(c, checked))
             if controller.effect:      # only MSI: the Static/Rainbow menu + speed slider
@@ -512,7 +597,7 @@ class LedController(QWidget):
                     self._msi_effect, self._on_msi_effect_changed,
                     self._effect_speed, self._on_speed_changed,
                 )
-            card.set_connected(True)
+            card.set_status(True)
             self._local_cards[controller.card_id] = card
             self._device_vbox.insertWidget(self._device_vbox.count() - 1, card)
 
@@ -520,26 +605,37 @@ class LedController(QWidget):
             card = _DeviceCard(address, self._display(address), address in self._selected)
             card.toggled.connect(self._on_card_toggled)
             card.renameRequested.connect(self._on_card_rename)
-            card.set_connected(self._manager.is_connected(address))
+            card.removeRequested.connect(self._on_card_remove)
+            card.set_status(self._manager.is_connected(address),
+                            self._reachable(address), self._present(address))
             self._cards[address] = card
             self._device_vbox.insertWidget(self._device_vbox.count() - 1, card)
         self._fit_device_scroll()
+        self._update_controls_visibility()
 
     def _fit_device_scroll(self):
         # QScrollArea won't size to its content; fit it to the rows, then scroll
-        # past a cap so a long list can't take over the window. The MSI card is
-        # taller while it shows the rainbow speed slider.
-        row_h, gap, cap = 66, 8, 5
-        count = len(self._known) + len(self._locals)
-        shown = min(max(count, 1), cap)
-        extra = 56 if (self._msi is not None and self._msi_effect == "rainbow") else 0
-        self._device_scroll.setFixedHeight(shown * row_h + (shown - 1) * gap + extra)
+        # past a cap so a long list can't take over the window. Measure the rows
+        # (don't guess a row height) so QSS borders/padding and the taller MSI
+        # rainbow card are counted exactly -- otherwise a few px short shows a
+        # spurious vertical scrollbar.
+        gap, cap = 8, 5
+        cards = list(self._local_cards.values()) + list(self._cards.values())
+        if not cards:
+            self._device_scroll.setFixedHeight(56)
+            return
+        for card in cards:
+            card.ensurePolished()
+        shown = min(len(cards), cap)
+        heights = [card.sizeHint().height() for card in cards[:shown]]
+        self._device_scroll.setFixedHeight(sum(heights) + (shown - 1) * gap)
 
     def _refresh_row(self, address):
         card = self._cards.get(address)
         if card is not None:
             card.set_name(self._display(address))
-            card.set_connected(self._manager.is_connected(address))
+            card.set_status(self._manager.is_connected(address),
+                            self._reachable(address), self._present(address))
         self._update_controls_visibility()
 
     def _update_controls_visibility(self):
@@ -547,10 +643,18 @@ class LedController(QWidget):
         # the colour editor is useful on its own (it can drive the motherboard).
         connected = self._manager.connected_addresses()
         count = len(connected) + len(self._locals)
-        self._controls.setVisible(bool(connected) or bool(self._locals))
-        self._conn_chip.setText(f"{count} connected" if count else "Not connected")
-        self._conn_chip.setProperty("connected", "true" if count else "false")
+        # Keep the editor available while the user still wants strips, even after
+        # an idle release -- adjusting reconnects them (see _wake).
+        self._controls.setVisible(bool(connected) or bool(self._locals) or bool(self._desired))
+        if self._idle and self._desired:
+            self._conn_chip.setText("Idle")
+            self._conn_chip.setProperty("connected", "false")
+        else:
+            self._conn_chip.setText(f"{count} connected" if count else "Not connected")
+            self._conn_chip.setProperty("connected", "true" if count else "false")
         _repolish(self._conn_chip)
+        # Connect is live only for a ticked, in-range strip found by a scan.
+        self._connect_btn.setEnabled(bool(self._connectable()))
 
     def _on_card_toggled(self, address, checked):
         if checked:
@@ -558,6 +662,7 @@ class LedController(QWidget):
         else:
             self._selected.discard(address)
         self._save_state()
+        self._update_controls_visibility()  # Connect enables once a strip is ticked
 
     def _on_card_rename(self, address):
         current = self._aliases.get(address, self._known.get(address, ""))
@@ -571,6 +676,20 @@ class LedController(QWidget):
             self._aliases.pop(address, None)
         self._save_state()
         self._refresh_row(address)
+
+    def _on_card_remove(self, address):
+        # Forget a saved strip entirely: drop it from every set and disconnect if
+        # live. It reappears (without its alias) on a scan that finds it again.
+        self._desired.discard(address)
+        self._selected.discard(address)
+        self._in_range.discard(address)
+        self._known.pop(address, None)
+        self._aliases.pop(address, None)
+        if self._manager.is_connected(address):
+            asyncio.ensure_future(self._manager.disconnect(address))
+        self._save_state()
+        self._rebuild_list()
+        self._update_controls_visibility()
 
     # ---- color -----------------------------------------------------------
 
@@ -685,6 +804,7 @@ class LedController(QWidget):
         if self._tray is not None and self._tray_color_icon:
             self._tray.setIcon(self._tray_icon())
         self._push_local_colors()  # mirror to every synced USB controller
+        await self._wake()         # re-establish links if we released them to idle
         targets = [a for a in self._selected if self._manager.is_connected(a)]
         if not targets:
             return
@@ -696,6 +816,7 @@ class LedController(QWidget):
         failed = [a for a, exc in results.items() if exc is not None]
         if failed:
             self._set_status(f"Color send failed: {', '.join(self._display(a) for a in failed)}")
+        self._touch()
 
     # ---- rainbow effect --------------------------------------------------
 
@@ -798,6 +919,8 @@ class LedController(QWidget):
         finally:
             self._scan_btn.setEnabled(True)
 
+        self._scanned = True
+        self._in_range = {d.address for d in devices}
         for d in devices:
             self._known[d.address] = d.name
         self._rebuild_list()
@@ -809,10 +932,14 @@ class LedController(QWidget):
 
     @asyncSlot()
     async def _on_connect_selected(self):
-        targets = list(self._selected)
+        targets = list(self._connectable())
         if not targets:
-            self._set_status("Tick a device in the list first.")
+            self._set_status(
+                "Scan first, then tick an in-range device." if not self._scanned
+                else "Tick an in-range device to connect."
+            )
             return
+        self._idle = False            # explicit connect ends any idle release
         self._desired |= set(targets)
         await self._connect_many(targets)
 
@@ -831,12 +958,15 @@ class LedController(QWidget):
             log.exception("connect failed for %s", address)
             return
         self._refresh_row(address)
+        self._touch()  # a live link starts/refreshes the idle countdown
 
     @asyncSlot()
     async def _on_disconnect_all(self):
         # Disconnect every connected device (checked or not) so nothing is orphaned.
         targets = list(self._manager.connected_addresses())
         self._desired.clear()
+        self._idle = False
+        self._idle_timer.stop()
         await asyncio.gather(
             *(self._manager.disconnect(a) for a in targets), return_exceptions=True
         )
@@ -847,9 +977,45 @@ class LedController(QWidget):
     def _on_device_disconnect(self, address):
         # Called by the manager when a link drops (wanted or not).
         self._refresh_row(address)
-        if address in self._desired and not self._closing:
+        # A drop we caused to idle isn't a fault: don't fight it with a reconnect.
+        if self._idle or self._closing:
+            return
+        if address in self._desired:
             self._set_status(f"{self._display(address)}: link dropped, reconnecting...")
             asyncio.ensure_future(self._reconnect(address))
+
+    # ---- idle release ----------------------------------------------------
+
+    def _touch(self):
+        # Any command (or fresh link) restarts the idle countdown; only meaningful
+        # once we actually want links.
+        if self._desired:
+            self._idle_timer.start()
+
+    async def _wake(self):
+        # If we released the links to idle, bring the wanted ones back before a
+        # command lands. No-op when never connected or still live.
+        if self._idle and self._desired:
+            self._set_status("Reconnecting...")
+            await self._connect_many(list(self._desired))
+            if self._manager.connected_addresses():
+                self._idle = False
+
+    @asyncSlot()
+    async def _on_idle(self):
+        # Release the BLE links after inactivity so they stop contending with BT
+        # audio; the next command reconnects (see _wake). Set the flag first so
+        # the disconnect callbacks don't treat this as a fault and reconnect.
+        targets = list(self._manager.connected_addresses())
+        if not targets:
+            return
+        self._idle = True
+        await asyncio.gather(
+            *(self._manager.disconnect(a) for a in targets), return_exceptions=True
+        )
+        for address in targets:
+            self._refresh_row(address)
+        self._set_status("Idle — released Bluetooth. Adjust to reconnect.")
 
     async def _reconnect(self, address):
         if address in self._reconnecting:
@@ -902,6 +1068,7 @@ class LedController(QWidget):
         # No readback: keep an optimistic state and only adopt it if the send
         # actually reached a device. Local USB controllers are covered too.
         local_ok = self._set_local_power(on)
+        await self._wake()         # re-establish links if we released them to idle
         if [a for a in self._selected if self._manager.is_connected(a)]:
             ble_ok = await self._broadcast(
                 lambda d: d.set_power(on), "Turned on." if on else "Turned off."
@@ -915,6 +1082,7 @@ class LedController(QWidget):
         if ble_ok or local_ok:
             self._power_on = on
             self._update_power_visual()
+        self._touch()
 
     @asyncSlot()
     async def _on_power_toggle(self):
