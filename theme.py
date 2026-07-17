@@ -132,6 +132,11 @@ QFrame#deviceRow[unavailable="true"] {
 }
 QFrame#deviceRow[unavailable="true"] QLabel#cardTitle { color: #A3ABB7; }
 QFrame#deviceRow[unavailable="true"] QLabel#cardSub { color: #B4BAC5; }
+/* The strip the editor is currently focused on (click a row to focus). */
+QFrame#deviceRow[focused="true"] {
+    background-color: #E1EBFE;
+    border: 2px solid #2563EB;
+}
 
 QScrollArea#deviceScroll { background: transparent; border: none; }
 QScrollArea#deviceScroll > QWidget > QWidget { background: transparent; }

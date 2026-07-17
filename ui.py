@@ -107,6 +107,7 @@ class _DeviceCard(QFrame):
     toggled = Signal(str, bool)
     renameRequested = Signal(str)
     removeRequested = Signal(str)
+    focusRequested = Signal(str)
 
     def __init__(self, address, name, checked, sub=None, removable=True):
         super().__init__()
@@ -183,8 +184,19 @@ class _DeviceCard(QFrame):
         self.setProperty("selected", "true" if want else "false")
         _repolish(self)
 
+    def mousePressEvent(self, event):
+        # Clicking the row body (not the checkbox, which eats its own clicks)
+        # focuses this strip so the editor targets it. BLE rows only.
+        if self._removable and event.button() == Qt.MouseButton.LeftButton:
+            self.focusRequested.emit(self._address)
+        super().mousePressEvent(event)
+
     def mouseDoubleClickEvent(self, _event):
         self.renameRequested.emit(self._address)
+
+    def set_focused(self, on):
+        self.setProperty("focused", "true" if on else "false")
+        _repolish(self)
 
     def contextMenuEvent(self, event):
         # BLE rows only: forget a saved strip (locals are USB, always present).
@@ -288,7 +300,10 @@ class LedController(QWidget):
         self._reconnecting: set[str] = set()
         self._cards: dict[str, _DeviceCard] = {}
         self._local_cards: dict[str, _DeviceCard] = {}
-        self._power_on = False                 # optimistic: last command sent
+        self._power_on = False                 # optimistic: last command sent (active editor)
+        self._focus: str | None = None         # focused BLE strip (None unless one is picked)
+        self._bulk = True                      # All mode: edits fan out to every ticked strip
+        self._loading = False                  # suppress sends while loading editor from state
         self._msi_effect = "static"            # MSI mode: "static" (picker) or "rainbow"
         self._effect_hue = 0.0
         self._effect_timer = QTimer(self)
@@ -462,6 +477,20 @@ class LedController(QWidget):
         self._picker.set_color(self._base_color)  # before connecting: no spurious send
         self._picker.colorChanged.connect(self._on_picker_changed)
 
+        # Edit-target row: which strip the editor drives -- one focused strip, or
+        # "All" (every ticked strip together). Click a device row to focus it.
+        self._editing_label = QLabel("Editing: All selected")
+        self._editing_label.setObjectName("fieldLabel")
+        self._all_btn = QPushButton("All")
+        self._all_btn.setObjectName("power")   # reuse the on/off toggle look
+        self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._all_btn.setToolTip("Edit all ticked strips together")
+        self._all_btn.clicked.connect(self._on_all_clicked)
+        edit_row = QHBoxLayout()
+        edit_row.addWidget(self._editing_label)
+        edit_row.addStretch()
+        edit_row.addWidget(self._all_btn)
+
         # Power row: label left, the compact toggle right (mirrors the Color row).
         power_label = QLabel("Power")
         power_label.setObjectName("fieldLabel")
@@ -490,17 +519,37 @@ class LedController(QWidget):
         color_head.addWidget(self._swatch)
         color_head.addWidget(self._hex_input)
 
+        # The editable body sits under the edit-target row and is disabled whenever
+        # no live strip is targeted (so nothing can be adjusted without a device).
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(14)
+        body.addLayout(power_row)
+        body.addLayout(color_head)
+        body.addWidget(self._picker)
+        body.addLayout(self._build_brightness())
+        body.addLayout(self._build_presets())
+        self._editor_body = QWidget()
+        self._editor_body.setLayout(body)
+        # NB: don't put a QGraphicsOpacityEffect here to dim the locked state --
+        # this widget lives inside the card's drop-shadow effect, and Qt renders
+        # nested graphics effects into a mislaid offscreen pixmap (body drifts out
+        # of the window). Disabled-greying + the hint below convey the lock.
+
+        # Shown only while the body is locked: says why and how to unlock it.
+        self._editor_hint = QLabel()
+        self._editor_hint.setObjectName("hint")
+        self._editor_hint.setWordWrap(True)
+
         self._controls = QFrame()
         self._controls.setObjectName("card")
         _card_shadow(self._controls)
         box = QVBoxLayout(self._controls)
         box.setContentsMargins(20, 18, 20, 20)
         box.setSpacing(14)
-        box.addLayout(power_row)
-        box.addLayout(color_head)
-        box.addWidget(self._picker)
-        box.addLayout(self._build_brightness())
-        box.addLayout(self._build_presets())
+        box.addLayout(edit_row)
+        box.addWidget(self._editor_hint)
+        box.addWidget(self._editor_body)
 
         self._update_power_visual()
         self._update_hero(self._base_color)
@@ -576,12 +625,16 @@ class LedController(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        if self._focus is not None and self._focus not in self._known:
+            self._focus = None  # focused strip was forgotten
+
         if not self._known and not self._locals:
             empty = QLabel("No devices yet. Run a scan.")
             empty.setObjectName("hint")
             self._device_vbox.insertWidget(0, empty)
             self._fit_device_scroll()
             self._update_controls_visibility()
+            self._refresh_focus_ui()
             return
 
         for controller in self._locals:
@@ -606,12 +659,14 @@ class LedController(QWidget):
             card.toggled.connect(self._on_card_toggled)
             card.renameRequested.connect(self._on_card_rename)
             card.removeRequested.connect(self._on_card_remove)
+            card.focusRequested.connect(self._on_card_focus)
             card.set_status(self._manager.is_connected(address),
                             self._reachable(address), self._present(address))
             self._cards[address] = card
             self._device_vbox.insertWidget(self._device_vbox.count() - 1, card)
         self._fit_device_scroll()
         self._update_controls_visibility()
+        self._refresh_focus_ui()
 
     def _fit_device_scroll(self):
         # QScrollArea won't size to its content; fit it to the rows, then scroll
@@ -655,6 +710,7 @@ class LedController(QWidget):
         _repolish(self._conn_chip)
         # Connect is live only for a ticked, in-range strip found by a scan.
         self._connect_btn.setEnabled(bool(self._connectable()))
+        self._update_editor_enabled()
 
     def _on_card_toggled(self, address, checked):
         if checked:
@@ -676,6 +732,7 @@ class LedController(QWidget):
             self._aliases.pop(address, None)
         self._save_state()
         self._refresh_row(address)
+        self._refresh_focus_ui()  # keep the "Editing: <name>" label in sync
 
     def _on_card_remove(self, address):
         # Forget a saved strip entirely: drop it from every set and disconnect if
@@ -685,17 +742,121 @@ class LedController(QWidget):
         self._in_range.discard(address)
         self._known.pop(address, None)
         self._aliases.pop(address, None)
+        self._states.pop(address, None)
         if self._manager.is_connected(address):
             asyncio.ensure_future(self._manager.disconnect(address))
         self._save_state()
         self._rebuild_list()
         self._update_controls_visibility()
 
+    # ---- edit target (focus vs All) --------------------------------------
+
+    def _edit_targets(self):
+        # Addresses the editor's changes apply to: the focused strip, or (All
+        # mode) every ticked strip, or nothing. Sends filter to connected ones.
+        if self._focus is not None:
+            return [self._focus]
+        if self._bulk:
+            return list(self._selected)
+        return []
+
+    def _state_of(self, address):
+        # Stored per-device state, or a fresh default (never sent until edited).
+        return self._states.get(address) or {
+            "color": DEFAULT_COLOR.name(), "brightness": DEFAULT_BRIGHTNESS, "power": False}
+
+    def _live(self, address):
+        # Part of the active control session: connected, or wanted (idle-released
+        # but reconnects on the next command). These are the strips you can edit.
+        return self._manager.is_connected(address) or address in self._desired
+
+    def _editor_active(self):
+        # The editor is usable only when it targets a live strip -- or, in All
+        # mode, a synced local USB controller (which needs no BLE link).
+        if any(self._live(a) for a in self._edit_targets()):
+            return True
+        return self._bulk and any(self._is_synced(c) for c in self._locals)
+
+    def _update_editor_enabled(self):
+        active = self._editor_active()
+        self._editor_body.setEnabled(active)
+        self._editor_hint.setVisible(not active)
+        if not active:
+            self._editor_hint.setText(
+                "Pick a strip above, or turn on All, to adjust."
+                if not self._bulk and self._focus is None
+                else "Connect a strip to adjust."
+            )
+
+    def _stamp_targets(self, **fields):
+        # Merge only the given field(s) into every targeted strip's stored state.
+        # Colour and power are separate frames, so a colour tweak must not clobber
+        # a strip's own power (and vice versa); per-device values survive edits to
+        # the other attribute.
+        for address in self._edit_targets():
+            st = self._states.get(address)
+            if st is None:
+                st = {"color": DEFAULT_COLOR.name(),
+                      "brightness": DEFAULT_BRIGHTNESS, "power": False}
+                self._states[address] = st
+            st.update(fields)
+
+    def _load_editor(self, state):
+        # Show a strip's stored state in the editor without sending anything.
+        self._loading = True
+        color = QColor(state["color"])
+        self._base_color = color if color.isValid() else QColor(DEFAULT_COLOR)
+        self._brightness = int(state.get("brightness", DEFAULT_BRIGHTNESS))
+        self._power_on = bool(state.get("power", False))
+        self._picker.set_color(self._base_color)
+        self._brightness_slider.setValue(self._brightness)
+        self._brightness_value.setText(f"{self._brightness}%")
+        self._update_hero(self._base_color)
+        self._update_power_visual()
+        if self._tray is not None and self._tray_color_icon:
+            self._tray.setIcon(self._tray_icon())
+        self._loading = False
+
+    def _on_card_focus(self, address):
+        if not self._live(address):
+            self._set_status(f"{self._display(address)}: connect it first to edit it.")
+            return
+        if self._focus == address:
+            return
+        self._focus = address
+        self._bulk = False
+        self._load_editor(self._state_of(address))
+        self._refresh_focus_ui()
+
+    def _on_all_clicked(self):
+        # Toggle All: on -> edits fan out to every ticked strip; off -> nothing is
+        # targeted (edits are inert until you pick a strip or turn All back on).
+        self._bulk = not self._bulk
+        self._focus = None
+        self._refresh_focus_ui()
+
+    def _refresh_focus_ui(self):
+        if self._focus is not None:
+            name = self._display(self._focus)
+        elif self._bulk:
+            name = "All selected"
+        else:
+            name = "none"
+        self._editing_label.setText(f"Editing: {name}")
+        self._all_btn.setProperty("on", "true" if self._bulk else "false")
+        _repolish(self._all_btn)
+        for address, card in self._cards.items():
+            card.set_focused(address == self._focus)
+        self._update_editor_enabled()
+
     # ---- color -----------------------------------------------------------
 
     def _on_picker_changed(self, color):
         self._base_color = color
         self._update_hero(color)
+        if self._loading:
+            return
+        self._stamp_targets(color=self._base_color.name(), brightness=self._brightness)
         self._color_timer.start()  # debounced send + tray icon update
 
     def _update_hero(self, color):
@@ -744,6 +905,9 @@ class LedController(QWidget):
     def _on_brightness_changed(self, value):
         self._brightness = value
         self._brightness_value.setText(f"{value}%")
+        if self._loading:
+            return
+        self._stamp_targets(color=self._base_color.name(), brightness=self._brightness)
         self._color_timer.start()  # debounced send, same path as colour changes
 
     def _on_speed_changed(self, value):
@@ -803,9 +967,11 @@ class LedController(QWidget):
     async def _send_base_color(self):
         if self._tray is not None and self._tray_color_icon:
             self._tray.setIcon(self._tray_icon())
-        self._push_local_colors()  # mirror to every synced USB controller
-        await self._wake()         # re-establish links if we released them to idle
-        targets = [a for a in self._selected if self._manager.is_connected(a)]
+        if self._bulk:
+            self._push_local_colors()  # locals mirror the bulk colour, not a focus
+        await self._wake()             # re-establish links if we released them to idle
+        self._save_state()             # persist the per-device state we stamped
+        targets = [a for a in self._edit_targets() if self._manager.is_connected(a)]
         if not targets:
             return
         c = self._base_color
@@ -967,11 +1133,14 @@ class LedController(QWidget):
         self._desired.clear()
         self._idle = False
         self._idle_timer.stop()
+        self._focus = None            # nothing to edit individually once disconnected
+        self._bulk = True
         await asyncio.gather(
             *(self._manager.disconnect(a) for a in targets), return_exceptions=True
         )
         for address in targets:
             self._refresh_row(address)
+        self._refresh_focus_ui()
         self._set_status("All devices disconnected.")
 
     def _on_device_disconnect(self, address):
@@ -1044,9 +1213,9 @@ class LedController(QWidget):
     # ---- broadcast control ----------------------------------------------
 
     async def _broadcast(self, action, ok_status):
-        """Fan a command out to every checked-and-connected device. Returns True
-        if it reached at least one device."""
-        targets = [a for a in self._selected if self._manager.is_connected(a)]
+        """Fan a command out to every targeted-and-connected device (the focused
+        strip, or all ticked). Returns True if it reached at least one device."""
+        targets = [a for a in self._edit_targets() if self._manager.is_connected(a)]
         if not targets:
             self._set_status("No checked-and-connected device.")
             return False
@@ -1066,10 +1235,11 @@ class LedController(QWidget):
 
     async def _set_power(self, on):
         # No readback: keep an optimistic state and only adopt it if the send
-        # actually reached a device. Local USB controllers are covered too.
-        local_ok = self._set_local_power(on)
+        # actually reached a device. In All mode the local USB controllers are
+        # covered too; a focused BLE strip is driven alone.
+        local_ok = self._set_local_power(on) if self._bulk else False
         await self._wake()         # re-establish links if we released them to idle
-        if [a for a in self._selected if self._manager.is_connected(a)]:
+        if [a for a in self._edit_targets() if self._manager.is_connected(a)]:
             ble_ok = await self._broadcast(
                 lambda d: d.set_power(on), "Turned on." if on else "Turned off."
             )
@@ -1082,6 +1252,8 @@ class LedController(QWidget):
         if ble_ok or local_ok:
             self._power_on = on
             self._update_power_visual()
+            self._stamp_targets(power=on)  # remember this power per targeted strip
+            self._save_state()
         self._touch()
 
     @asyncSlot()
@@ -1161,6 +1333,8 @@ class LedController(QWidget):
         self._presets = presets
         self._tray_color_icon = self._settings.value("tray_color_icon", False, type=bool)
         self._brightness = self._settings.value("brightness", DEFAULT_BRIGHTNESS, type=int)
+        # Per-device output: address -> {"color": "#rrggbb", "brightness": int, "power": bool}.
+        self._states = json.loads(self._settings.value("states_json", "{}"))
         self._local_sync = json.loads(self._settings.value("local_sync_json", "{}"))
         if self._settings.contains("msi_sync"):  # migrate the pre-SteelSeries key, then drop it
             if "msi-mystic-light" not in self._local_sync:
@@ -1176,5 +1350,6 @@ class LedController(QWidget):
         self._settings.setValue("color", self._base_color.name())
         self._settings.setValue("tray_color_icon", self._tray_color_icon)
         self._settings.setValue("brightness", self._brightness)
+        self._settings.setValue("states_json", json.dumps(self._states))
         self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
         self._settings.setValue("effect_speed", self._effect_speed)
