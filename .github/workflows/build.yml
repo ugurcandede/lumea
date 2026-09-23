@@ -19,8 +19,8 @@ jobs:
     name: Determine version
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ needs.version.outputs.tag }}
-      version: ${{ needs.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
