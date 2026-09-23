@@ -64,7 +64,7 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
    **brightness** and **power**; commands go to every connected target at once.
 4. **Presets** — the 12 dots: left-click applies, right-click saves the current color.
 5. **Disconnect** (the same button, once everything ticked is linked) drops every connection.
-6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, about.
+6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, usage stats, about.
 
 Closing the window keeps the app in the **system tray**. Checked devices, aliases, presets and the last color are saved
 and restored on launch, and dropped links auto-reconnect.
@@ -97,10 +97,17 @@ If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea
 - **Static color only**, following the picker. No brick risk (plain HID output reports; nothing is written to onboard flash).
 - Verified on an **Apex 3** and a **Rival 650**. Other SteelSeries models are detected and left alone.
 
+## Privacy
+
+Once a day Lumea sends an anonymous ping to Google Analytics: a random install id and the app version. Nothing else —
+**no device names, no addresses, no colors.** Turn it off any time by unchecking **Send anonymous usage stats** in
+settings.
+
 ## Layout
 
 ```
 main.py          entry point: QApplication + qasync event loop
+analytics.py     one anonymous daily ping (opt-out in Settings)
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
 msi_mystic.py    optional MSI Mystic Light (USB HID) backend
 steelseries.py   optional SteelSeries Apex 3 / Rival 650 (USB HID) backend

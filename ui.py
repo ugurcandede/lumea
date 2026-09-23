@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 from qasync import asyncSlot
 
+import analytics
 import ble
 import colorpicker
 import icon
@@ -774,6 +775,15 @@ class LedController(QWidget):
                            "Otherwise the tray shows the Lumea icon", self._tray_switch),
         ])
 
+        self._stats_switch = _Switch()
+        self._stats_switch.setChecked(analytics.enabled())
+        self._stats_switch.toggled.connect(analytics.set_enabled)
+        privacy = self._section("Privacy", [
+            self._pref_row("Send anonymous usage stats",
+                           "One ping a day: a random install id and the app version. Nothing else.",
+                           self._stats_switch),
+        ])
+
         open_url = lambda url: (lambda: QDesktopServices.openUrl(QUrl(url)))
         about = self._section("About", [
             self._pref_row("Lumea", "Desktop control for ELK-BLEDOM and MELK LED strips"),
@@ -793,6 +803,8 @@ class LedController(QWidget):
         col.addWidget(bar)
         col.addWidget(_rule())
         col.addWidget(appearance)
+        col.addWidget(_rule())
+        col.addWidget(privacy)
         col.addWidget(_rule())
         col.addWidget(about)
         col.addStretch()

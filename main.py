@@ -10,6 +10,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
+import analytics
 import icon
 from ui import LedController
 
@@ -50,6 +51,7 @@ def main() -> None:
 
     win = LedController(close_event)
     win.show()
+    analytics.start()
 
     # A second launch connects to our socket instead of starting up; surface the
     # existing window when that happens.
