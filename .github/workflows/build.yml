@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'  # PySide6/Pillow wheels lag on the newest Python; pin a known-good one
+          python-version: '3.12'  # PySide6 wheels lag on the newest Python; pin a known-good one
           cache: pip
 
       - name: Install dependencies

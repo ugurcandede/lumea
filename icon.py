@@ -1,15 +1,14 @@
-"""App icons via Pillow.
+"""App icons.
 
 `app_icon()` is the static project icon (window / taskbar). `make_icon()` draws
-the dynamic tray icon that reflects the current strip color. Pillow is kept
-isolated here so the dependency is easy to drop.
+the dynamic tray icon that reflects the current strip color, straight into a
+QPixmap (no image-library round trip).
 """
 
-import io
 from pathlib import Path
 
-from PIL import Image, ImageDraw
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 _SIZE = 64
 _ICON_FILE = Path(__file__).resolve().parent / "assets" / "icon.png"
@@ -22,16 +21,12 @@ def app_icon() -> QIcon:
 
 def make_icon(color: QColor) -> QIcon:
     """A filled circle in `color` -- used as the tray icon (reflects the strip color)."""
-    image = Image.new("RGBA", (_SIZE, _SIZE), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse(
-        [6, 6, _SIZE - 6, _SIZE - 6],
-        fill=(color.red(), color.green(), color.blue(), 255),
-        outline=(40, 40, 40, 255),
-        width=2,
-    )
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    pixmap = QPixmap()
-    pixmap.loadFromData(buffer.getvalue(), "PNG")
+    pixmap = QPixmap(_SIZE, _SIZE)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setBrush(color)
+    painter.setPen(QPen(QColor(40, 40, 40), 2))
+    painter.drawEllipse(7, 7, _SIZE - 14, _SIZE - 14)
+    painter.end()
     return QIcon(pixmap)

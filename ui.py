@@ -12,13 +12,19 @@ device. Brightness is the V axis of the color picker (the actual RGB is sent).
 import asyncio
 import json
 import logging
+import plistlib
+import sys
+from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import (
+    QCoreApplication, QEvent, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QSettings, QTimer, Signal,
+)
+from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QGraphicsDropShadowEffect,
+    QGraphicsScene,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -46,6 +52,8 @@ log = logging.getLogger(__name__)
 RECONNECT_ATTEMPTS = 5
 RECONNECT_DELAY_S = 3.0
 COLOR_DEBOUNCE_MS = 80
+# Colour ticks fire ~12x/s while dragging; coalesce their settings writes.
+SAVE_DEBOUNCE_MS = 1000
 # Drop the BLE links after this much idle so they stop contending with BT audio;
 # the next command reconnects (see _wake). Local USB controllers are unaffected.
 IDLE_DISCONNECT_MS = 60_000
@@ -62,19 +70,93 @@ DEFAULT_PRESETS = [
 PRESET_COLUMNS = 6
 
 
+def _bluetooth_blocker():
+    """macOS kills any process that touches Bluetooth unless its bundle's Info.plist
+    carries NSBluetoothAlwaysUsageDescription. The packaged app has it (added in
+    CI); a source run inherits the interpreter's bundle (Python.app), which
+    doesn't. Returns the message to show instead of scanning, or None if clear."""
+    if sys.platform != "darwin":
+        return None
+    exe = Path(QCoreApplication.applicationFilePath())
+    plist = next((p / "Contents" / "Info.plist" for p in exe.parents
+                  if (p / "Contents" / "Info.plist").is_file()), None)
+    if plist is None:
+        return None  # not inside a bundle; nothing to check
+    try:
+        with open(plist, "rb") as f:
+            if "NSBluetoothAlwaysUsageDescription" in plistlib.load(f):
+                return None
+    except Exception:
+        return None
+    return (f"Bluetooth is blocked: {plist} has no NSBluetoothAlwaysUsageDescription, "
+            "so macOS would kill the app on scan. One-time fix, then restart:\n"
+            "plutil -insert NSBluetoothAlwaysUsageDescription -string "
+            f"\"Lumea controls Bluetooth LED strips.\" \"{plist}\"")
+
+
 def _repolish(widget):
     """Re-evaluate the stylesheet after a dynamic property change."""
     widget.style().unpolish(widget)
     widget.style().polish(widget)
 
 
-def _card_shadow(widget):
-    """Soft drop shadow so white cards float on the grey page (figure/ground)."""
-    shadow = QGraphicsDropShadowEffect(widget)
-    shadow.setBlurRadius(34)
-    shadow.setColor(QColor(30, 41, 59, 60))
-    shadow.setOffset(0, 12)
-    widget.setGraphicsEffect(shadow)
+_SHADOW_PAD = 48  # blur radius 34 + offset 12, rounded up
+
+
+class _Page(QWidget):
+    """The fixed-width column. Paints the cards' soft drop shadows itself (so white
+    cards float on the grey page) from a pixmap rendered once per card size.
+    Setting a QGraphicsDropShadowEffect on the card instead re-renders and
+    re-blurs the whole card on every child repaint -- ~5 ms per picker/slider
+    drag tick on a Retina display."""
+
+    def __init__(self):
+        super().__init__()
+        self._cards = []
+        self._shadows = {}  # (w, h, dpr) -> pixmap
+
+    def add_shadow(self, card):
+        self._cards.append(card)
+        card.installEventFilter(self)  # keep the shadow under a moved/resized card
+
+    def eventFilter(self, _obj, event):
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize,
+                            QEvent.Type.Show, QEvent.Type.Hide):
+            self.update()
+        return False
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        for card in self._cards:
+            if card.isVisible():
+                p.drawPixmap(card.pos() - QPoint(_SHADOW_PAD, _SHADOW_PAD),
+                             self._shadow(card.width(), card.height()))
+
+    def _shadow(self, w, h):
+        dpr = self.devicePixelRatioF()
+        pm = self._shadows.get((w, h, dpr))
+        if pm is None:
+            # The same effect as before, applied once to a plain rounded rect of the
+            # card's size; the card itself paints over the white source.
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(0, 0, w, h), 18, 18)
+            scene = QGraphicsScene()
+            item = scene.addPath(path, QPen(Qt.PenStyle.NoPen), QBrush(QColor(255, 255, 255)))
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(34)
+            shadow.setColor(QColor(30, 41, 59, 60))
+            shadow.setOffset(0, 12)
+            item.setGraphicsEffect(shadow)
+            size = QSize(w + 2 * _SHADOW_PAD, h + 2 * _SHADOW_PAD)
+            pm = QPixmap(size * dpr)
+            pm.setDevicePixelRatio(dpr)
+            pm.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pm)
+            scene.render(painter, QRectF(QPointF(0, 0), QSizeF(size)),
+                         QRectF(-_SHADOW_PAD, -_SHADOW_PAD, size.width(), size.height()))
+            painter.end()
+            self._shadows[(w, h, dpr)] = pm
+        return pm
 
 
 class _ElideLabel(QLabel):
@@ -195,7 +277,10 @@ class _DeviceCard(QFrame):
         self.renameRequested.emit(self._address)
 
     def set_focused(self, on):
-        self.setProperty("focused", "true" if on else "false")
+        value = "true" if on else "false"
+        if self.property("focused") == value:
+            return  # every card is asked on each focus change; repolish only the two that flip
+        self.setProperty("focused", value)
         _repolish(self)
 
     def contextMenuEvent(self, event):
@@ -314,7 +399,12 @@ class LedController(QWidget):
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(IDLE_DISCONNECT_MS)
         self._idle_timer.timeout.connect(self._on_idle)
+        self._save_timer = QTimer(self)      # coalesces per-tick colour saves
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(SAVE_DEBOUNCE_MS)
+        self._save_timer.timeout.connect(self._save_state)
         self._closing = False
+        self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
 
         self._load_state()
         self._base_color = self._load_color()
@@ -338,7 +428,7 @@ class LedController(QWidget):
 
         # Everything lives in a fixed-width column so wrap-able labels can never
         # widen the window; the outer SetFixedSize then pins width and fits height.
-        content = QWidget()
+        content = self._page = _Page()
         content.setFixedWidth(520)
         col = QVBoxLayout(content)
         col.setContentsMargins(20, 20, 20, 16)
@@ -448,7 +538,7 @@ class LedController(QWidget):
 
         card = QFrame()
         card.setObjectName("card")
-        _card_shadow(card)
+        self._page.add_shadow(card)
         box = QVBoxLayout(card)
         box.setContentsMargins(20, 18, 20, 20)
         box.setSpacing(12)
@@ -508,7 +598,8 @@ class LedController(QWidget):
         self._hex_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hex_input.setMaxLength(7)
         self._hex_input.setToolTip("Type a hex colour, e.g. #33C9A4, and press Enter")
-        self._hex_input.returnPressed.connect(self._apply_hex_input)
+        # editingFinished already covers Enter (and focus-out); returnPressed too
+        # would run the apply twice per Enter.
         self._hex_input.editingFinished.connect(self._apply_hex_input)
         color_label = QLabel("Color")
         color_label.setObjectName("fieldLabel")
@@ -531,10 +622,8 @@ class LedController(QWidget):
         body.addLayout(self._build_presets())
         self._editor_body = QWidget()
         self._editor_body.setLayout(body)
-        # NB: don't put a QGraphicsOpacityEffect here to dim the locked state --
-        # this widget lives inside the card's drop-shadow effect, and Qt renders
-        # nested graphics effects into a mislaid offscreen pixmap (body drifts out
-        # of the window). Disabled-greying + the hint below convey the lock.
+        # Disabled-greying + the hint below convey the lock (no graphics effect:
+        # it would re-render the whole body on every picker tick).
 
         # Shown only while the body is locked: says why and how to unlock it.
         self._editor_hint = QLabel()
@@ -543,7 +632,7 @@ class LedController(QWidget):
 
         self._controls = QFrame()
         self._controls.setObjectName("card")
-        _card_shadow(self._controls)
+        self._page.add_shadow(self._controls)
         box = QVBoxLayout(self._controls)
         box.setContentsMargins(20, 18, 20, 20)
         box.setSpacing(14)
@@ -573,7 +662,13 @@ class LedController(QWidget):
         color_icon_action.toggled.connect(self._on_toggle_tray_color_icon)
         menu.addSeparator()
         menu.addAction("Quit", self._quit)
-        self._tray.setContextMenu(menu)
+        self._tray_menu = menu
+        # macOS: don't hand the menu to the status item. Qt's native path
+        # (-[QStatusItemDelegate statusItemMenuBeganTracking:], Qt 6.11) reads
+        # NSEvent.clickCount on a non-mouse event and AppKit aborts the process on
+        # macOS 26+. We pop our own QMenu on click instead (see _on_tray_activated).
+        if sys.platform != "darwin":
+            self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
 
@@ -970,7 +1065,7 @@ class LedController(QWidget):
         if self._bulk:
             self._push_local_colors()  # locals mirror the bulk colour, not a focus
         await self._wake()             # re-establish links if we released them to idle
-        self._save_state()             # persist the per-device state we stamped
+        self._save_timer.start()       # persist the stamped state (coalesced; quit flushes)
         targets = [a for a in self._edit_targets() if self._manager.is_connected(a)]
         if not targets:
             return
@@ -1074,6 +1169,9 @@ class LedController(QWidget):
 
     @asyncSlot()
     async def _on_scan(self):
+        if self._ble_blocker:
+            self._set_status(self._ble_blocker)
+            return
         self._scan_btn.setEnabled(False)
         self._set_status("Scanning...")
         try:
@@ -1273,6 +1371,11 @@ class LedController(QWidget):
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._toggle_window()
+        elif sys.platform == "darwin" and reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.Context,
+        ):
+            self._tray_menu.popup(QCursor.pos())  # see _setup_tray
 
     def _toggle_window(self):
         if self.isVisible():

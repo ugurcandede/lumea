@@ -22,7 +22,16 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> If `pip install` fails on the newest Python, use a 3.11–3.13 interpreter (PySide6/Pillow wheels can lag).
+> If `pip install` fails on the newest Python, use a 3.11–3.13 interpreter (PySide6 wheels can lag).
+
+> **macOS, running from source:** Bluetooth access requires an `NSBluetoothAlwaysUsageDescription` entry in the
+> *interpreter's* app bundle (the packaged app ships with it). Without it macOS terminates the process on the first
+> scan, so Lumea refuses to scan and shows the one-time fix in its status line, e.g. for python.org's 3.13:
+>
+> ```bash
+> plutil -insert NSBluetoothAlwaysUsageDescription -string "Lumea controls Bluetooth LED strips." \
+>   /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/Info.plist
+> ```
 
 ## Install
 
