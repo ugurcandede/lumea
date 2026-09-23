@@ -4,9 +4,9 @@ All BLE work goes through ble.DeviceManager and runs on the qasync event loop vi
 @asyncSlot -- no worker threads. The device never reports state back, so the UI
 is optimistic: what it shows is the last command sent, not a readback.
 
-Multiple strips can be controlled at once: tick devices in the list, connect the
-ticked ones, and power/color commands fan out to every ticked-and-connected
-device. Brightness is the V axis of the color picker (the actual RGB is sent).
+One compact, frameless panel: an editor (target chips, picker, presets,
+brightness + power) above the device list, plus a Settings page in the same
+window. The UI is achromatic; the only colour on it is the one being sent.
 """
 
 import asyncio
@@ -16,15 +16,12 @@ import plistlib
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import (
-    QCoreApplication, QEvent, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QSettings, QTimer, Signal,
-)
-from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtCore import QCoreApplication, QPointF, QRectF, Qt, QSettings, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCheckBox,
+    QAbstractButton,
+    QApplication,
     QFrame,
-    QGraphicsDropShadowEffect,
-    QGraphicsScene,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -35,9 +32,11 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QStackedLayout,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 from qasync import asyncSlot
 
@@ -46,6 +45,7 @@ import colorpicker
 import icon
 import msi_mystic
 import steelseries
+import theme
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +67,12 @@ DEFAULT_PRESETS = [
     "#ff0000", "#ff7a00", "#ffd400", "#7ed321", "#00c000", "#00c9a4",
     "#00bcd4", "#2563eb", "#7e22ce", "#ec4899", "#ff8a3d", "#ffffff",
 ]
-PRESET_COLUMNS = 6
+PANEL_WIDTH = 400
+DEVICE_ROWS_SHOWN = 4          # the list scrolls past this many rows
+THEME_MODES = ("auto", "light", "dark")
+GITHUB_URL = "https://github.com/ugurcandede/Lumea"
+AUTHOR_URL = "https://github.com/ugurcandede"
+SITE_URL = "https://ugurcandede.github.io/"
 
 
 def _bluetooth_blocker():
@@ -100,63 +105,109 @@ def _repolish(widget):
     widget.style().polish(widget)
 
 
-_SHADOW_PAD = 48  # blur radius 34 + offset 12, rounded up
+def _rule():
+    line = QFrame()
+    line.setObjectName("rule")
+    line.setFixedHeight(1)
+    return line
 
 
-class _Page(QWidget):
-    """The fixed-width column. Paints the cards' soft drop shadows itself (so white
-    cards float on the grey page) from a pixmap rendered once per card size.
-    Setting a QGraphicsDropShadowEffect on the card instead re-renders and
-    re-blurs the whole card on every child repaint -- ~5 ms per picker/slider
-    drag tick on a Retina display."""
+def _label(text, name):
+    lbl = QLabel(text)
+    lbl.setObjectName(name)
+    return lbl
+
+
+def _button(text, name, slot=None, tooltip=None):
+    btn = QPushButton(text)
+    btn.setObjectName(name)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if slot is not None:
+        btn.clicked.connect(slot)
+    if tooltip:
+        btn.setToolTip(tooltip)
+    return btn
+
+
+def _menu(parent=None):
+    # Rounded, borderless popup so the QSS radius shows (no square frame behind it).
+    menu = QMenu(parent)
+    menu.setWindowFlags(menu.windowFlags() | Qt.WindowType.FramelessWindowHint
+                        | Qt.WindowType.NoDropShadowWindowHint)
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    return menu
+
+
+class _Check(QAbstractButton):
+    """16 px rounded checkbox painted from the theme (QSS can't draw the tick
+    without an image asset)."""
 
     def __init__(self):
         super().__init__()
-        self._cards = []
-        self._shadows = {}  # (w, h, dpr) -> pixmap
-
-    def add_shadow(self, card):
-        self._cards.append(card)
-        card.installEventFilter(self)  # keep the shadow under a moved/resized card
-
-    def eventFilter(self, _obj, event):
-        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize,
-                            QEvent.Type.Show, QEvent.Type.Hide):
-            self.update()
-        return False
+        self.setCheckable(True)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def paintEvent(self, _event):
+        t = theme.current
         p = QPainter(self)
-        for card in self._cards:
-            if card.isVisible():
-                p.drawPixmap(card.pos() - QPoint(_SHADOW_PAD, _SHADOW_PAD),
-                             self._shadow(card.width(), card.height()))
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0.75, 0.75, 14.5, 14.5)
+        if self.isChecked():
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(t["primary_bg"] if self.isEnabled() else t["disabled_bg"]))
+            p.drawRoundedRect(r, 4.5, 4.5)
+            p.setPen(QPen(QColor(t["primary_fg"] if self.isEnabled() else t["disabled_fg"]), 2,
+                          Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            p.drawPolyline([QPointF(3.6, 8.2), QPointF(6.7, 11.2), QPointF(12.4, 5.0)])
+        else:
+            p.setPen(QPen(QColor(t["line"] if self.isEnabled() else t["disabled_bg"]), 1.5))
+            p.setBrush(QColor(t["panel"]))
+            p.drawRoundedRect(r, 4.5, 4.5)
 
-    def _shadow(self, w, h):
-        dpr = self.devicePixelRatioF()
-        pm = self._shadows.get((w, h, dpr))
-        if pm is None:
-            # The same effect as before, applied once to a plain rounded rect of the
-            # card's size; the card itself paints over the white source.
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(0, 0, w, h), 18, 18)
-            scene = QGraphicsScene()
-            item = scene.addPath(path, QPen(Qt.PenStyle.NoPen), QBrush(QColor(255, 255, 255)))
-            shadow = QGraphicsDropShadowEffect()
-            shadow.setBlurRadius(34)
-            shadow.setColor(QColor(30, 41, 59, 60))
-            shadow.setOffset(0, 12)
-            item.setGraphicsEffect(shadow)
-            size = QSize(w + 2 * _SHADOW_PAD, h + 2 * _SHADOW_PAD)
-            pm = QPixmap(size * dpr)
-            pm.setDevicePixelRatio(dpr)
-            pm.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(pm)
-            scene.render(painter, QRectF(QPointF(0, 0), QSizeF(size)),
-                         QRectF(-_SHADOW_PAD, -_SHADOW_PAD, size.width(), size.height()))
-            painter.end()
-            self._shadows[(w, h, dpr)] = pm
-        return pm
+
+class _Switch(QAbstractButton):
+    """36x20 toggle switch (Settings)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setCheckable(True)
+        self.setFixedSize(36, 20)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, _event):
+        t = theme.current
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(t["primary_bg"] if self.isChecked() else t["line"]))
+        p.drawRoundedRect(QRectF(0, 0, 36, 20), 10, 10)
+        p.setBrush(QColor(t["primary_fg"] if self.isChecked() else t["handle"]))
+        x = 18 if self.isChecked() else 2
+        p.drawEllipse(QRectF(x, 2, 16, 16))
+
+
+class _Dot(QLabel):
+    """Small filled circle whose colour is set at runtime (title-bar colour,
+    row status)."""
+
+    def __init__(self, size):
+        super().__init__()
+        self.setFixedSize(size, size)
+        self._color = None
+
+    def set_color(self, color):
+        self._color = QColor(color) if color is not None else None
+        self.update()
+
+    def paintEvent(self, _event):
+        if self._color is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(self._color)
+        p.drawEllipse(QRectF(0, 0, self.width(), self.height()))
 
 
 class _ElideLabel(QLabel):
@@ -183,8 +234,8 @@ class _ElideLabel(QLabel):
 
 
 class _DeviceCard(QFrame):
-    """One strip as an inset row: a checkbox (= in the control group, tinted blue
-    when ticked), the name/address, and a connection chip. Double-click to rename."""
+    """One strip as an inset row: a checkbox (= in the control group), the
+    name/address, and a status. Click to focus, double-click to rename."""
 
     toggled = Signal(str, bool)
     renameRequested = Signal(str)
@@ -197,47 +248,47 @@ class _DeviceCard(QFrame):
         self._address = address
         self._removable = removable
         self._selected_pref = checked  # in the control group? (survives going stale)
-        self.setProperty("selected", "true" if checked else "false")
 
-        self._check = QCheckBox()
+        self._check = _Check()
         self._check.setChecked(checked)  # set before connecting: no spurious emit
-        self._check.setCursor(Qt.CursorShape.PointingHandCursor)
         self._check.toggled.connect(self._on_check)
 
         self._name = _ElideLabel(name)
-        self._name.setObjectName("cardTitle")
+        self._name.setObjectName("rowName")
         self._sub = _ElideLabel(sub if sub is not None else address)
-        self._sub.setObjectName("cardSub")
+        self._sub.setObjectName("rowSub")
         text = QVBoxLayout()
         text.setContentsMargins(0, 0, 0, 0)
-        text.setSpacing(2)
+        text.setSpacing(1)
         text.addWidget(self._name)
         text.addWidget(self._sub)
 
-        self._chip = QLabel()
-        self._chip.setObjectName("chip")
+        self._status_dot = _Dot(7)
+        self._status = _label("", "rowStatus")
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(14)
+        row.setSpacing(10)
         row.addWidget(self._check)
         row.addLayout(text, 1)
-        row.addWidget(self._chip)
+        row.addWidget(self._status_dot)
+        row.addWidget(self._status)
         self._row = row
+        head = QWidget()
+        head.setFixedHeight(40)
+        head.setLayout(row)
 
         # Vertical outer so an effect can add an expandable area below the row.
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(16, 13, 16, 13)
-        outer.setSpacing(10)
-        outer.addLayout(row)
+        outer.setContentsMargins(12, 0, 12, 0)
+        outer.setSpacing(0)
+        outer.addWidget(head)
         self._outer = outer
 
         self.set_status(False)
 
     def _on_check(self, checked):
         self._selected_pref = checked
-        self.setProperty("selected", "true" if checked else "false")
-        _repolish(self)
         self.toggled.emit(self._address, checked)
 
     def set_name(self, name):
@@ -247,13 +298,13 @@ class _DeviceCard(QFrame):
         # Three states: Connected (live GATT link), Offline (reachable but not
         # connected), Not in range (known but absent from the last scan -> dimmed).
         stale = not connected and not in_range
-        self._chip.setText(
-            "Connected" if connected else "Offline" if in_range else "Not in range"
-        )
-        self._chip.setProperty("connected", "true" if connected else "false")
-        self._chip.setProperty("stale", "true" if stale else "false")
-        _repolish(self._chip)
-        self.setProperty("unavailable", "true" if stale else "false")
+        state = "ok" if connected else "stale" if stale else "off"
+        self._status.setText("Connected" if connected else "Offline" if in_range else "Not in range")
+        self._status_dot.set_color(theme.current["ok_dot"] if connected else None)
+        self._status_dot.setVisible(connected)
+        if self._status.property("state") != state:
+            self._status.setProperty("state", state)
+            _repolish(self._status)
         # Only a strip confirmed present this session (connected or found by a scan)
         # can join the control group: otherwise lock the checkbox and show it
         # unticked, but keep the user's choice for when the strip turns up.
@@ -263,8 +314,10 @@ class _DeviceCard(QFrame):
             self._check.blockSignals(True)   # display-only: don't mutate _selected
             self._check.setChecked(want)
             self._check.blockSignals(False)
-        self.setProperty("selected", "true" if want else "false")
-        _repolish(self)
+        unavailable = "true" if stale else "false"
+        if self.property("unavailable") != unavailable:
+            self.setProperty("unavailable", unavailable)
+            _repolish(self)
 
     def mousePressEvent(self, event):
         # Clicking the row body (not the checkbox, which eats its own clicks)
@@ -274,7 +327,8 @@ class _DeviceCard(QFrame):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, _event):
-        self.renameRequested.emit(self._address)
+        if self._removable:
+            self.renameRequested.emit(self._address)
 
     def set_focused(self, on):
         value = "true" if on else "false"
@@ -287,8 +341,9 @@ class _DeviceCard(QFrame):
         # BLE rows only: forget a saved strip (locals are USB, always present).
         if not self._removable:
             return
-        menu = QMenu(self)
-        menu.addAction("Remove", lambda: self.removeRequested.emit(self._address))
+        menu = _menu(self)
+        menu.addAction("Rename…", lambda: self.renameRequested.emit(self._address))
+        menu.addAction("Forget this strip", lambda: self.removeRequested.emit(self._address))
         menu.exec(event.globalPos())
 
     def set_effect_menu(self, mode, callback, speed, speed_callback):
@@ -298,19 +353,13 @@ class _DeviceCard(QFrame):
         self._effect_cb = callback
         self._speed_cb = speed_callback
 
-        self._effect_btn = QPushButton(f"{mode.capitalize()} ▾")
-        self._effect_btn.setObjectName("effectMenu")
-        self._effect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._effect_btn.clicked.connect(self._open_effect_menu)
-        self._row.insertWidget(self._row.count() - 1, self._effect_btn)  # before the chip
+        self._effect_btn = _button(f"{mode.capitalize()}  ▾", "menuBtn", self._open_effect_menu)
+        self._row.insertWidget(self._row.count() - 2, self._effect_btn)  # before the status
 
-        speed_label = QLabel("Speed")
-        speed_label.setObjectName("cardSub")
-        self._speed_value = QLabel(f"{speed}%")
-        self._speed_value.setObjectName("cardSub")
+        self._speed_value = _label(f"{speed}%", "value")
         head = QHBoxLayout()
         head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(speed_label)
+        head.addWidget(_label("Speed", "sectionLabel"))
         head.addStretch()
         head.addWidget(self._speed_value)
 
@@ -322,7 +371,7 @@ class _DeviceCard(QFrame):
         self._speed_slider.valueChanged.connect(self._on_speed)
 
         speed_box = QVBoxLayout()
-        speed_box.setContentsMargins(0, 0, 0, 0)
+        speed_box.setContentsMargins(0, 0, 0, 10)
         speed_box.setSpacing(6)
         speed_box.addLayout(head)
         speed_box.addWidget(self._speed_slider)
@@ -336,7 +385,7 @@ class _DeviceCard(QFrame):
         self._speed_cb(value)
 
     def _open_effect_menu(self):
-        menu = QMenu(self)
+        menu = _menu(self)
         for label, mode in (("Static", "static"), ("Rainbow", "rainbow")):
             act = menu.addAction(label)
             act.setCheckable(True)
@@ -348,9 +397,57 @@ class _DeviceCard(QFrame):
         if mode == self._effect_mode:
             return
         self._effect_mode = mode
-        self._effect_btn.setText(f"{mode.capitalize()} ▾")
+        self._effect_btn.setText(f"{mode.capitalize()}  ▾")
         self._speed_area.setVisible(mode == "rainbow")
         self._effect_cb(mode)
+
+
+class _StackLayout(QStackedLayout):
+    """A QStackedLayout sized to its *current* page only. The stock one answers
+    sizeHint/heightForWidth with the max over every page (QWidgetItem asks the
+    layout directly, so overriding the widget is not enough), which would keep
+    the fixed-size window as tall as the tallest page."""
+
+    def sizeHint(self):
+        page = self.currentWidget()
+        return page.sizeHint() if page else super().sizeHint()
+
+    def minimumSize(self):
+        page = self.currentWidget()
+        return page.minimumSizeHint() if page else super().minimumSize()
+
+    def hasHeightForWidth(self):
+        page = self.currentWidget()
+        return bool(page and page.hasHeightForWidth())
+
+    def heightForWidth(self, width):
+        page = self.currentWidget()
+        return page.heightForWidth(width) if page and page.hasHeightForWidth() else -1
+
+
+class _Stack(QWidget):
+    """Page container (main / settings) that lets the window shrink and grow
+    with the page it shows."""
+
+    def __init__(self):
+        super().__init__()
+        self._layout = _StackLayout(self)
+        self._layout.currentChanged.connect(lambda _i: self.updateGeometry())
+
+    def addWidget(self, page):
+        self._layout.addWidget(page)
+
+    def setCurrentIndex(self, index):
+        self._layout.setCurrentIndex(index)
+
+    def currentIndex(self):
+        return self._layout.currentIndex()
+
+    def currentWidget(self):
+        return self._layout.currentWidget()
+
+    def widget(self, index):
+        return self._layout.widget(index)
 
 
 class _TitleBar(QWidget):
@@ -369,9 +466,10 @@ class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
         self.setWindowTitle("Lumea")
-        # Frameless: we draw our own title bar (see _build_header). Stays a normal
-        # top-level window (taskbar entry); fixed-size, so no resize/maximise.
+        # Frameless + translucent: the rounded QFrame#panel is the visible window.
+        # Stays a normal top-level window (taskbar entry); fixed-size, so no resize.
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._close_event = close_event
         self._settings = QSettings()
@@ -385,6 +483,7 @@ class LedController(QWidget):
         self._reconnecting: set[str] = set()
         self._cards: dict[str, _DeviceCard] = {}
         self._local_cards: dict[str, _DeviceCard] = {}
+        self._chips: dict[str | None, QPushButton] = {}   # None = the "All" chip
         self._power_on = False                 # optimistic: last command sent (active editor)
         self._focus: str | None = None         # focused BLE strip (None unless one is picked)
         self._bulk = True                      # All mode: edits fan out to every ticked strip
@@ -404,15 +503,25 @@ class LedController(QWidget):
         self._save_timer.setInterval(SAVE_DEBOUNCE_MS)
         self._save_timer.timeout.connect(self._save_state)
         self._closing = False
+        self._sending = False                  # a colour send is in flight (see _on_color_timeout)
+        self._send_pending = False             # ...and a newer colour arrived meanwhile
+        self._wake_lock = asyncio.Lock()       # one idle-wake at a time
         self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
 
         self._load_state()
         self._base_color = self._load_color()
+        theme.apply(QApplication.instance(), self._theme_mode)
 
         self._build_ui()
         self._setup_tray()
         self._rebuild_list()
         self._update_controls_visibility()
+        self._refresh_theme_widgets()
+
+        # Follow the OS when the theme is on Auto (Qt 6.5+ reports scheme changes).
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
 
         # Don't auto-connect on launch: opening the app (it lives in the tray)
         # must not seize Bluetooth. The user scans + connects when they want to
@@ -424,82 +533,173 @@ class LedController(QWidget):
     # ---- construction ----------------------------------------------------
 
     def _build_ui(self):
-        self.setObjectName("root")
-
-        # Everything lives in a fixed-width column so wrap-able labels can never
-        # widen the window; the outer SetFixedSize then pins width and fits height.
-        content = self._page = _Page()
-        content.setFixedWidth(520)
-        col = QVBoxLayout(content)
-        col.setContentsMargins(20, 20, 20, 16)
-        col.setSpacing(16)
-        col.addWidget(self._build_header())
-        col.addWidget(self._build_devices_card())
-        col.addWidget(self._build_controls_card())
-
-        self._status = QLabel("Ready. Run a scan to find your strips.")
-        self._status.setObjectName("status")
-        self._status.setWordWrap(True)
-        col.addWidget(self._status)
-
-        footer = QLabel(
-            "<span>Developed by </span>"
-            '<a href="https://github.com/ugurcandede">@ugurcandede</a>'
-        )
-        footer.setObjectName("footer")
-        footer.setTextFormat(Qt.TextFormat.RichText)
-        footer.setOpenExternalLinks(True)
-        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(footer)
+        self.setObjectName("window")
+        panel = QFrame()
+        panel.setObjectName("panel")
+        panel.setFixedWidth(PANEL_WIDTH)
+        self._stack = _Stack()
+        self._stack.addWidget(self._build_main_page())
+        self._stack.addWidget(self._build_settings_page())
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._stack)
 
         root = QVBoxLayout(self)
         # Fixed-size: the window fits its content and can't be resized/maximised.
         root.setSizeConstraint(QVBoxLayout.SizeConstraint.SetFixedSize)
         root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(content)
+        root.addWidget(panel)
 
-    def _build_header(self):
-        # Our own title bar (the OS one is hidden): title + chip + window buttons,
-        # and the whole strip is the drag handle for the frameless window.
-        title = QLabel("Lumea")
-        title.setObjectName("h1")
-        subtitle = QLabel("LED strip control")
-        subtitle.setObjectName("subtitle")
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(2)
-        left.addWidget(title)
-        left.addWidget(subtitle)
+    def _win_button(self, kind, slot, tooltip):
+        btn = _button("", "winBtn", slot, tooltip)
+        btn.setProperty("glyph", kind)
+        return btn
 
-        self._conn_chip = QLabel("Not connected")
-        self._conn_chip.setObjectName("chip")
-
-        min_btn = QPushButton("–")  # en dash
-        min_btn.setObjectName("winBtn")
-        min_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        min_btn.setToolTip("Minimize")
-        min_btn.clicked.connect(self.showMinimized)
-        close_btn = QPushButton("✕")  # multiplication x
-        close_btn.setObjectName("winClose")
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setToolTip("Close to tray")
-        close_btn.clicked.connect(self.close)
-
+    def _build_main_page(self):
+        # Title bar: app icon, name, connection summary, settings/min/close.
+        app_mark = QLabel()
+        app_mark.setFixedSize(18, 18)
+        app_mark.setPixmap(icon.app_icon().pixmap(18, 18))
+        app_mark.setScaledContents(True)
+        self._conn_label = _label("Not connected", "connLabel")
+        self._settings_btn = self._win_button("tune", self._open_settings, "Settings")
+        min_btn = self._win_button("minus", self.showMinimized, "Minimize")
+        close_btn = self._win_button("close", self.close, "Close to tray")
         bar = _TitleBar()
         bar.setObjectName("titleBar")
+        bar.setFixedHeight(44)
         header = QHBoxLayout(bar)
-        header.setContentsMargins(0, 0, 0, 0)
+        header.setContentsMargins(16, 0, 8, 0)
         header.setSpacing(8)
-        header.addLayout(left)
+        header.addWidget(app_mark)
+        header.addWidget(_label("Lumea", "appName"))
         header.addStretch()
-        header.addWidget(self._conn_chip, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self._conn_label)
         header.addSpacing(4)
-        header.addWidget(min_btn, 0, Qt.AlignmentFlag.AlignTop)
-        header.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
-        return bar
+        header.addWidget(self._settings_btn)
+        header.addWidget(min_btn)
+        header.addWidget(close_btn)
 
-    def _build_devices_card(self):
-        # Inset device rows live in a (rarely-scrolling) column.
+        self._status = _label("Ready. Run a scan to find your strips.", "statusText")
+        self._status.setWordWrap(True)
+        status_box = QWidget()
+        status_lay = QHBoxLayout(status_box)
+        status_lay.setContentsMargins(16, 10, 16, 10)
+        status_lay.addWidget(self._status)
+
+        page = QWidget()
+        col = QVBoxLayout(page)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(bar)
+        col.addWidget(_rule())
+        # The whole editor section is hidden until something live can be edited.
+        self._editor_section = self._build_editor()
+        self._editor_rule = _rule()
+        col.addWidget(self._editor_section)
+        col.addWidget(self._editor_rule)
+        col.addWidget(self._build_devices())
+        col.addWidget(_rule())
+        col.addWidget(status_box)
+        return page
+
+    def _build_editor(self):
+        self._color_timer = QTimer(self)
+        self._color_timer.setSingleShot(True)
+        self._color_timer.setInterval(COLOR_DEBOUNCE_MS)
+        self._color_timer.timeout.connect(self._on_color_timeout)
+
+        # Edit-target row: "All" plus a chip per live strip (rebuilt in
+        # _refresh_focus_ui); a hint replaces them while nothing can be edited.
+        self._chip_row = QHBoxLayout()
+        self._chip_row.setContentsMargins(0, 0, 0, 0)
+        self._chip_row.setSpacing(6)
+        self._target_hint = _label("", "hint")
+        target = QHBoxLayout()
+        target.setContentsMargins(0, 0, 0, 0)
+        target.setSpacing(10)
+        target.addWidget(_label("Editing", "sectionLabel"))
+        target.addLayout(self._chip_row)
+        target.addWidget(self._target_hint)
+        target.addStretch()
+        target_box = QWidget()
+        target_box.setFixedHeight(26)
+        target_box.setLayout(target)
+
+        self._picker = colorpicker.ColorPicker()
+        self._picker.set_color(self._base_color)  # before connecting: no spurious send
+        self._picker.colorChanged.connect(self._on_picker_changed)
+
+        # Presets as a row of colour dots, then the editable hex readout.
+        self._preset_btns = []
+        presets = QHBoxLayout()
+        presets.setContentsMargins(0, 0, 0, 0)
+        presets.setSpacing(7)
+        for i in range(len(self._presets)):
+            btn = QPushButton()
+            btn.setObjectName("preset")
+            btn.setFixedSize(18, 18)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _checked=False, idx=i: self._apply_preset(idx))
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(lambda _pos, idx=i: self._save_preset(idx))
+            self._preset_btns.append(btn)
+            presets.addWidget(btn)
+        presets.addStretch()
+        self._hex_input = QLineEdit()
+        self._hex_input.setObjectName("hexInput")
+        self._hex_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hex_input.setMaxLength(7)
+        self._hex_input.setToolTip("Type a hex colour, e.g. #33C9A4, and press Enter")
+        # editingFinished already covers Enter (and focus-out); returnPressed too
+        # would run the apply twice per Enter.
+        self._hex_input.editingFinished.connect(self._apply_hex_input)
+        presets.addWidget(self._hex_input)
+
+        # Brightness: master dimmer scaling the picked colour client-side
+        # (scaled_color); the power pill sits at the row's end.
+        self._brightness_value = _label(f"{self._brightness}%", "value")
+        self._brightness_value.setFixedWidth(34)
+        self._brightness_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self._brightness_slider.setObjectName("brightness")
+        self._brightness_slider.setRange(0, 100)
+        self._brightness_slider.setValue(self._brightness)
+        self._brightness_slider.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
+        self._power_btn = _button("", "power", self._on_power_toggle)
+        bright_label = _label("Brightness", "sectionLabel")
+        bright_label.setFixedWidth(64)
+        bright = QHBoxLayout()
+        bright.setContentsMargins(0, 0, 0, 0)
+        bright.setSpacing(10)
+        bright.addWidget(bright_label)
+        bright.addWidget(self._brightness_slider, 1)
+        bright.addWidget(self._brightness_value)
+        bright.addSpacing(2)
+        bright.addWidget(self._power_btn)
+
+        # The editable body is disabled whenever no live strip is targeted.
+        body = QVBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
+        body.addWidget(self._picker)
+        body.addLayout(presets)
+        body.addLayout(bright)
+        self._editor_body = QWidget()
+        self._editor_body.setLayout(body)
+
+        editor = QWidget()
+        col = QVBoxLayout(editor)
+        col.setContentsMargins(16, 12, 16, 14)
+        col.setSpacing(12)
+        col.addWidget(target_box)
+        col.addWidget(self._editor_body)
+        self._update_power_visual()
+        self._update_hero(self._base_color)
+        return editor
+
+    def _build_devices(self):
         self._device_container = QWidget()
         self._device_vbox = QVBoxLayout(self._device_container)
         self._device_vbox.setContentsMargins(0, 0, 0, 0)
@@ -514,135 +714,168 @@ class LedController(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._device_scroll = scroll
 
-        hint = QLabel("Check the strips you want to control · double-click to rename")
-        hint.setObjectName("hint")
-        hint.setWordWrap(True)
+        self._scan_btn = _button("Scan", "ghost", self._on_scan, "Find nearby strips")
+        # One primary action: Connect the ticked in-range strips, or, when there is
+        # nothing left to connect, Disconnect everything.
+        self._link_btn = _button("Connect", "primary", self._on_link_clicked)
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(8)
+        head.addWidget(_label("Devices", "sectionLabel"))
+        head.addStretch()
+        head.addWidget(self._scan_btn)
+        head.addWidget(self._link_btn)
 
-        self._scan_btn = QPushButton("Scan")
-        self._scan_btn.setObjectName("pill")
-        self._scan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._scan_btn.clicked.connect(self._on_scan)
-        self._connect_btn = QPushButton("Connect")
-        self._connect_btn.setObjectName("primary")
-        self._connect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._connect_btn.clicked.connect(self._on_connect_selected)
-        self._disconnect_btn = QPushButton("Disconnect")
-        self._disconnect_btn.setObjectName("pill")
-        self._disconnect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._disconnect_btn.clicked.connect(self._on_disconnect_all)
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        btn_row.addWidget(self._scan_btn)
-        btn_row.addWidget(self._connect_btn, 1)
-        btn_row.addWidget(self._disconnect_btn)
+        section = QWidget()
+        col = QVBoxLayout(section)
+        col.setContentsMargins(16, 12, 16, 14)
+        col.setSpacing(8)
+        col.addLayout(head)
+        col.addWidget(scroll)
+        return section
 
-        card = QFrame()
-        card.setObjectName("card")
-        self._page.add_shadow(card)
-        box = QVBoxLayout(card)
-        box.setContentsMargins(20, 18, 20, 20)
-        box.setSpacing(12)
-        label = QLabel("Devices")
-        label.setObjectName("fieldLabel")
-        box.addWidget(label)
-        box.addWidget(scroll)
-        box.addWidget(hint)
-        box.addLayout(btn_row)
-        return card
+    def _build_settings_page(self):
+        back = self._win_button("back", self._close_settings, "Back")
+        min_btn = self._win_button("minus", self.showMinimized, "Minimize")
+        close_btn = self._win_button("close", self.close, "Close to tray")
+        bar = _TitleBar()
+        bar.setObjectName("titleBar")
+        bar.setFixedHeight(44)
+        header = QHBoxLayout(bar)
+        header.setContentsMargins(8, 0, 8, 0)
+        header.setSpacing(6)
+        header.addWidget(back)
+        header.addWidget(_label("Settings", "appName"))
+        header.addStretch()
+        header.addWidget(min_btn)
+        header.addWidget(close_btn)
 
-    def _build_controls_card(self):
-        # Compact power toggle, then a full-width colour editor with a small
-        # active-colour readout, then the preset grid.
-        self._power_btn = QPushButton()
-        self._power_btn.setObjectName("power")
-        self._power_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._power_btn.clicked.connect(self._on_power_toggle)
+        # Theme: Auto / Light / Dark segmented control.
+        self._seg_btns = {}
+        segment = QWidget()
+        segment.setObjectName("segment")
+        seg_lay = QHBoxLayout(segment)
+        seg_lay.setContentsMargins(2, 2, 2, 2)
+        seg_lay.setSpacing(2)
+        for mode, label in (("auto", "Auto"), ("light", "Light"), ("dark", "Dark")):
+            btn = _button(label, "segBtn", lambda _c=False, m=mode: self._on_theme_mode(m))
+            btn.setCheckable(True)
+            btn.setChecked(mode == self._theme_mode)
+            self._seg_btns[mode] = btn
+            seg_lay.addWidget(btn)
 
-        self._color_timer = QTimer(self)
-        self._color_timer.setSingleShot(True)
-        self._color_timer.setInterval(COLOR_DEBOUNCE_MS)
-        self._color_timer.timeout.connect(self._on_color_timeout)
+        self._tray_switch = _Switch()
+        self._tray_switch.setChecked(self._tray_color_icon)
+        self._tray_switch.toggled.connect(self._on_toggle_tray_color_icon)
 
-        self._picker = colorpicker.ColorPicker(show_preview=False)
-        self._picker.set_color(self._base_color)  # before connecting: no spurious send
-        self._picker.colorChanged.connect(self._on_picker_changed)
+        appearance = self._section("Appearance", [
+            self._pref_row("Theme", "Auto follows the system setting", segment),
+            self._pref_row("Tray icon shows the strip color",
+                           "Otherwise the tray shows the Lumea icon", self._tray_switch),
+        ])
 
-        # Edit-target row: which strip the editor drives -- one focused strip, or
-        # "All" (every ticked strip together). Click a device row to focus it.
-        self._editing_label = QLabel("Editing: All selected")
-        self._editing_label.setObjectName("fieldLabel")
-        self._all_btn = QPushButton("All")
-        self._all_btn.setObjectName("power")   # reuse the on/off toggle look
-        self._all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._all_btn.setToolTip("Edit all ticked strips together")
-        self._all_btn.clicked.connect(self._on_all_clicked)
-        edit_row = QHBoxLayout()
-        edit_row.addWidget(self._editing_label)
-        edit_row.addStretch()
-        edit_row.addWidget(self._all_btn)
+        open_url = lambda url: (lambda: QDesktopServices.openUrl(QUrl(url)))
+        about = self._section("About", [
+            self._pref_row("Lumea", "Desktop control for ELK-BLEDOM and MELK LED strips"),
+            self._pref_row("Open source", "MIT license. Built with PySide6, bleak and qasync.",
+                           _button("View on GitHub", "ghost", open_url(GITHUB_URL))),
+        ])
+        # Footer, same shape as the author's other apps: slogan, handle · site,
+        # then "Lumea · version" (html set in _refresh_theme_widgets).
+        self._credits = _label("", "credits")
+        self._credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._credits.setOpenExternalLinks(True)
 
-        # Power row: label left, the compact toggle right (mirrors the Color row).
-        power_label = QLabel("Power")
-        power_label.setObjectName("fieldLabel")
-        power_row = QHBoxLayout()
-        power_row.addWidget(power_label)
-        power_row.addStretch()
-        power_row.addWidget(self._power_btn)
+        page = QWidget()
+        col = QVBoxLayout(page)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(bar)
+        col.addWidget(_rule())
+        col.addWidget(appearance)
+        col.addWidget(_rule())
+        col.addWidget(about)
+        col.addStretch()
+        col.addWidget(self._credits)
+        col.addSpacing(12)
+        return page
 
-        # Colour row: label, then the active swatch + an editable hex field.
-        self._swatch = QFrame()
-        self._swatch.setObjectName("swatch")
-        self._swatch.setFixedSize(46, 26)
-        self._hex_input = QLineEdit()
-        self._hex_input.setObjectName("hexInput")
-        self._hex_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._hex_input.setMaxLength(7)
-        self._hex_input.setToolTip("Type a hex colour, e.g. #33C9A4, and press Enter")
-        # editingFinished already covers Enter (and focus-out); returnPressed too
-        # would run the apply twice per Enter.
-        self._hex_input.editingFinished.connect(self._apply_hex_input)
-        color_label = QLabel("Color")
-        color_label.setObjectName("fieldLabel")
-        color_head = QHBoxLayout()
-        color_head.setSpacing(10)
-        color_head.addWidget(color_label)
-        color_head.addStretch()
-        color_head.addWidget(self._swatch)
-        color_head.addWidget(self._hex_input)
+    def _section(self, title, rows):
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(16, 12, 16, 14)
+        col.setSpacing(6)
+        col.addWidget(_label(title, "sectionLabel"))
+        for row in rows:
+            col.addWidget(row)
+        return box
 
-        # The editable body sits under the edit-target row and is disabled whenever
-        # no live strip is targeted (so nothing can be adjusted without a device).
-        body = QVBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(14)
-        body.addLayout(power_row)
-        body.addLayout(color_head)
-        body.addWidget(self._picker)
-        body.addLayout(self._build_brightness())
-        body.addLayout(self._build_presets())
-        self._editor_body = QWidget()
-        self._editor_body.setLayout(body)
-        # Disabled-greying + the hint below convey the lock (no graphics effect:
-        # it would re-render the whole body on every picker tick).
+    def _pref_row(self, name, sub, right=None):
+        # `sub` is a string or a widget (e.g. a link label).
+        text = QVBoxLayout()
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setSpacing(2)
+        text.addWidget(_label(name, "rowName"))
+        if isinstance(sub, QWidget):
+            text.addWidget(sub)
+        elif sub:
+            sub_lbl = _label(sub, "rowSub")
+            sub_lbl.setWordWrap(True)
+            text.addWidget(sub_lbl)
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 6, 0, 6)
+        lay.setSpacing(12)
+        lay.addLayout(text, 1)
+        if right is not None:
+            lay.addWidget(right, 0, Qt.AlignmentFlag.AlignVCenter)
+        return row
 
-        # Shown only while the body is locked: says why and how to unlock it.
-        self._editor_hint = QLabel()
-        self._editor_hint.setObjectName("hint")
-        self._editor_hint.setWordWrap(True)
+    # ---- theme -----------------------------------------------------------
 
-        self._controls = QFrame()
-        self._controls.setObjectName("card")
-        self._page.add_shadow(self._controls)
-        box = QVBoxLayout(self._controls)
-        box.setContentsMargins(20, 18, 20, 20)
-        box.setSpacing(14)
-        box.addLayout(edit_row)
-        box.addWidget(self._editor_hint)
-        box.addWidget(self._editor_body)
+    def _on_theme_mode(self, mode):
+        self._theme_mode = mode
+        for m, btn in self._seg_btns.items():
+            btn.setChecked(m == mode)
+        self._save_state()
+        self._apply_theme()
 
+    def _on_system_scheme_changed(self, _scheme):
+        if self._theme_mode == "auto":
+            self._apply_theme()
+
+    def _apply_theme(self):
+        theme.apply(QApplication.instance(), self._theme_mode)
+        self._refresh_theme_widgets()
+
+    def _refresh_theme_widgets(self):
+        # Things the stylesheet can't restyle: painted icons, per-colour swatches,
+        # custom-painted widgets, and the tray menu header.
+        t = theme.current
+        for btn in self.findChildren(QPushButton, "winBtn"):
+            btn.setIcon(icon.glyph(btn.property("glyph"), t["muted"], 14))
         self._update_power_visual()
-        self._update_hero(self._base_color)
-        return self._controls
+        self._refresh_presets()
+        version = QCoreApplication.applicationVersion() or "dev"
+        version_url = (f"{GITHUB_URL}/releases/tag/v{version}" if not version.startswith("dev")
+                       else f"{GITHUB_URL}/commits/master")
+        label = version if version.startswith("dev") else "v" + version
+        link = lambda url, text: f'<a href="{url}" style="color:{t["muted"]};text-decoration:none">{text}</a>'
+        dot = f'<span style="color:{t["line"]}">&nbsp;·&nbsp;</span>'
+        self._credits.setText(
+            f'<span style="color:{t["faint"]}">built with</span> ❤️ '
+            f'<span style="color:{t["faint"]}">for</span> 💡 '
+            f'<span style="color:{t["faint"]}">rooms full of colour</span><br>'
+            f'{link(AUTHOR_URL, "ugurcandede")}{dot}{link(SITE_URL, "ugurcandede.github.io")}<br>'
+            f'<span style="color:{t["faint"]}">Lumea</span>{dot}{link(version_url, label)}')
+        for card in list(self._cards.values()) + list(self._local_cards.values()):
+            card.set_status(self._manager.is_connected(card._address) if card._removable else True,
+                            self._reachable(card._address) if card._removable else True,
+                            self._present(card._address) if card._removable else True)
+        for w in self.findChildren(QWidget):
+            w.update()
+
+    # ---- tray ------------------------------------------------------------
 
     def _setup_tray(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -651,29 +884,67 @@ class LedController(QWidget):
         self._tray = QSystemTrayIcon(self)
         self._tray.setIcon(self._tray_icon())
         self._tray.setToolTip("Lumea")
-        menu = QMenu()
-        menu.addAction("Show / Hide", self._toggle_window)
-        menu.addAction("On", self._on_power_on)
-        menu.addAction("Off", self._on_power_off)
-        menu.addSeparator()
-        color_icon_action = menu.addAction("Color tray icon")
-        color_icon_action.setCheckable(True)
-        color_icon_action.setChecked(self._tray_color_icon)
-        color_icon_action.toggled.connect(self._on_toggle_tray_color_icon)
-        menu.addSeparator()
-        menu.addAction("Quit", self._quit)
-        self._tray_menu = menu
+        self._tray_menu = self._build_tray_menu()
         # macOS: don't hand the menu to the status item. Qt's native path
         # (-[QStatusItemDelegate statusItemMenuBeganTracking:], Qt 6.11) reads
         # NSEvent.clickCount on a non-mouse event and AppKit aborts the process on
         # macOS 26+. We pop our own QMenu on click instead (see _on_tray_activated).
         if sys.platform != "darwin":
-            self._tray.setContextMenu(menu)
+            self._tray.setContextMenu(self._tray_menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
 
+    def _build_tray_menu(self):
+        menu = _menu()
+        self._tray_header = _label("", "menuHeader")
+        header = QWidgetAction(menu)
+        header.setDefaultWidget(self._tray_header)
+        menu.addAction(header)
+        menu.addSeparator()
+        self._act_show = menu.addAction("Show Lumea", self._toggle_window)
+        self._act_power = menu.addAction("Turn on", self._on_power_toggle)
+        # Quick colours: the 12 presets as a 6-column grid of dots.
+        quick = _menu(menu)
+        quick.setTitle("Quick colors")
+        grid_box = QWidget()
+        grid = QGridLayout(grid_box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.setSpacing(8)
+        self._quick_btns = []
+        for i in range(len(self._presets)):
+            btn = QPushButton()
+            btn.setObjectName("preset")
+            btn.setFixedSize(18, 18)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, idx=i: (self._apply_preset(idx), menu.close()))
+            self._quick_btns.append(btn)
+            grid.addWidget(btn, i // 6, i % 6)
+        grid_box.setFixedSize(grid.sizeHint())   # QMenu won't size a widget action's grid itself
+        grid_action = QWidgetAction(quick)
+        grid_action.setDefaultWidget(grid_box)
+        quick.addAction(grid_action)
+        menu.addMenu(quick)
+        menu.addSeparator()
+        menu.addAction("Settings…", self._open_settings)
+        menu.addSeparator()
+        menu.addAction("Quit Lumea", self._quit)
+        menu.aboutToShow.connect(self._refresh_tray_menu)
+        self._refresh_presets()   # colour the quick-colour dots
+        return menu
+
+    def _refresh_tray_menu(self):
+        t = theme.current
+        connected = len(self._manager.connected_addresses())
+        summary = (f"{connected} strip{'s' if connected != 1 else ''} connected" if connected
+                   else "Idle" if self._idle and self._desired else "Not connected")
+        self._tray_header.setText(
+            f'<span style="font-size:13px;font-weight:600;color:{t["ink"]}">Lumea</span><br>'
+            f'<span style="font-size:11px;color:{t["muted"]}">{summary}</span>')
+        self._act_show.setText("Hide Lumea" if self.isVisible() and not self.isMinimized() else "Show Lumea")
+        self._act_power.setText("Turn off" if self._power_on else "Turn on")
+
     def _tray_icon(self):
-        # App icon by default; the colored dot reflecting the strip color is opt-in.
+        # App icon by default; the coloured ring reflecting the strip colour is opt-in.
         return icon.make_icon(self._base_color) if self._tray_color_icon else icon.app_icon()
 
     def _on_toggle_tray_color_icon(self, checked):
@@ -681,6 +952,24 @@ class LedController(QWidget):
         if self._tray is not None:
             self._tray.setIcon(self._tray_icon())
         self._save_state()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._toggle_window()
+        elif sys.platform == "darwin" and reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.Context,
+        ):
+            self._tray_menu.popup(QCursor.pos())  # see _setup_tray
+
+    # ---- settings page ---------------------------------------------------
+
+    def _open_settings(self):
+        self._stack.setCurrentIndex(1)
+        self.show_window()
+
+    def _close_settings(self):
+        self._stack.setCurrentIndex(0)
 
     # ---- device list -----------------------------------------------------
 
@@ -724,8 +1013,13 @@ class LedController(QWidget):
             self._focus = None  # focused strip was forgotten
 
         if not self._known and not self._locals:
-            empty = QLabel("No devices yet. Run a scan.")
-            empty.setObjectName("hint")
+            empty = QFrame()
+            empty.setObjectName("emptyRow")
+            empty.setFixedHeight(40)
+            lay = QHBoxLayout(empty)
+            lay.setContentsMargins(12, 0, 12, 0)
+            lay.addWidget(_label("No strips yet. Scan to find nearby strips.", "hint"),
+                          0, Qt.AlignmentFlag.AlignCenter)
             self._device_vbox.insertWidget(0, empty)
             self._fit_device_scroll()
             self._update_controls_visibility()
@@ -767,16 +1061,15 @@ class LedController(QWidget):
         # QScrollArea won't size to its content; fit it to the rows, then scroll
         # past a cap so a long list can't take over the window. Measure the rows
         # (don't guess a row height) so QSS borders/padding and the taller MSI
-        # rainbow card are counted exactly -- otherwise a few px short shows a
-        # spurious vertical scrollbar.
-        gap, cap = 8, 5
+        # rainbow card are counted exactly.
+        gap = self._device_vbox.spacing()
         cards = list(self._local_cards.values()) + list(self._cards.values())
         if not cards:
-            self._device_scroll.setFixedHeight(56)
+            self._device_scroll.setFixedHeight(40)
             return
         for card in cards:
             card.ensurePolished()
-        shown = min(len(cards), cap)
+        shown = min(len(cards), DEVICE_ROWS_SHOWN)
         heights = [card.sizeHint().height() for card in cards[:shown]]
         self._device_scroll.setFixedHeight(sum(heights) + (shown - 1) * gap)
 
@@ -789,23 +1082,27 @@ class LedController(QWidget):
         self._update_controls_visibility()
 
     def _update_controls_visibility(self):
-        # Power + colour need a live BLE link; but when an MSI controller is present
-        # the colour editor is useful on its own (it can drive the motherboard).
         connected = self._manager.connected_addresses()
         count = len(connected) + len(self._locals)
-        # Keep the editor available while the user still wants strips, even after
-        # an idle release -- adjusting reconnects them (see _wake).
-        self._controls.setVisible(bool(connected) or bool(self._locals) or bool(self._desired))
         if self._idle and self._desired:
-            self._conn_chip.setText("Idle")
-            self._conn_chip.setProperty("connected", "false")
+            self._conn_label.setText("Idle")
         else:
-            self._conn_chip.setText(f"{count} connected" if count else "Not connected")
-            self._conn_chip.setProperty("connected", "true" if count else "false")
-        _repolish(self._conn_chip)
-        # Connect is live only for a ticked, in-range strip found by a scan.
-        self._connect_btn.setEnabled(bool(self._connectable()))
-        self._update_editor_enabled()
+            self._conn_label.setText(f"{count} connected" if count else "Not connected")
+        # One primary action: Connect while something ticked is in range and
+        # unlinked; otherwise Disconnect if anything is linked; else a disabled Connect.
+        if self._connectable():
+            self._link_btn.setText("Connect")
+            self._link_btn.setEnabled(True)
+        elif connected:
+            self._link_btn.setText("Disconnect")
+            self._link_btn.setEnabled(True)
+        else:
+            self._link_btn.setText("Connect")
+            self._link_btn.setEnabled(False)
+        self._link_btn.setToolTip(
+            "Connect the ticked strips" if self._link_btn.text() == "Connect"
+            else "Disconnect every strip")
+        self._refresh_focus_ui()
 
     def _on_card_toggled(self, address, checked):
         if checked:
@@ -817,7 +1114,7 @@ class LedController(QWidget):
 
     def _on_card_rename(self, address):
         current = self._aliases.get(address, self._known.get(address, ""))
-        text, ok = QInputDialog.getText(self, "Alias", f"Name for {address}:", text=current)
+        text, ok = QInputDialog.getText(self, "Rename strip", f"Name for {address}:", text=current)
         if not ok:
             return
         text = text.strip()
@@ -827,7 +1124,7 @@ class LedController(QWidget):
             self._aliases.pop(address, None)
         self._save_state()
         self._refresh_row(address)
-        self._refresh_focus_ui()  # keep the "Editing: <name>" label in sync
+        self._refresh_focus_ui()  # keep the chip label in sync
 
     def _on_card_remove(self, address):
         # Forget a saved strip entirely: drop it from every set and disconnect if
@@ -873,15 +1170,8 @@ class LedController(QWidget):
         return self._bulk and any(self._is_synced(c) for c in self._locals)
 
     def _update_editor_enabled(self):
-        active = self._editor_active()
-        self._editor_body.setEnabled(active)
-        self._editor_hint.setVisible(not active)
-        if not active:
-            self._editor_hint.setText(
-                "Pick a strip above, or turn on All, to adjust."
-                if not self._bulk and self._focus is None
-                else "Connect a strip to adjust."
-            )
+        # Hide, don't grey out: a disabled slider still reads as adjustable.
+        self._editor_body.setVisible(self._editor_active())
 
     def _stamp_targets(self, **fields):
         # Merge only the given field(s) into every targeted strip's stored state.
@@ -923,25 +1213,61 @@ class LedController(QWidget):
         self._load_editor(self._state_of(address))
         self._refresh_focus_ui()
 
-    def _on_all_clicked(self):
-        # Toggle All: on -> edits fan out to every ticked strip; off -> nothing is
-        # targeted (edits are inert until you pick a strip or turn All back on).
-        self._bulk = not self._bulk
-        self._focus = None
-        self._refresh_focus_ui()
+    def _on_chip_clicked(self, address):
+        # None = the All chip. Clicking the active chip clears the target (edits
+        # are inert until you pick one again), same as the old All toggle.
+        if address is None:
+            self._bulk = not self._bulk
+            self._focus = None
+            self._refresh_focus_ui()
+        elif self._focus == address:
+            self._focus = None
+            self._bulk = False
+            self._refresh_focus_ui()
+        else:
+            self._on_card_focus(address)
 
     def _refresh_focus_ui(self):
-        if self._focus is not None:
-            name = self._display(self._focus)
-        elif self._bulk:
-            name = "All selected"
+        # Rebuild the target chips: All + every live strip, in list order.
+        live = [a for a in sorted(self._known, key=lambda a: self._display(a).lower())
+                if self._live(a)]
+        wanted = [None] + live
+        if list(self._chips) != wanted:
+            while self._chip_row.count():
+                item = self._chip_row.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._chips = {}
+            for address in wanted:
+                label = "All" if address is None else self._display(address)
+                btn = _button(label, "chip", lambda _c=False, a=address: self._on_chip_clicked(a))
+                btn.setCheckable(True)
+                self._chips[address] = btn
+                self._chip_row.addWidget(btn)
         else:
-            name = "none"
-        self._editing_label.setText(f"Editing: {name}")
-        self._all_btn.setProperty("on", "true" if self._bulk else "false")
-        _repolish(self._all_btn)
+            for address, btn in self._chips.items():
+                if address is not None:
+                    btn.setText(self._display(address))
+        active = self._editor_active()
+        # No live strip and no synced local: nothing to edit, so no editor at all.
+        editable = bool(live) or any(self._is_synced(c) for c in self._locals)
+        self._editor_section.setVisible(editable)
+        self._editor_rule.setVisible(editable)
+        for address, btn in self._chips.items():
+            btn.blockSignals(True)
+            btn.setChecked(self._bulk if address is None else address == self._focus)
+            btn.blockSignals(False)
+        self._target_hint.setVisible(not active)
+        self._target_hint.setText("Pick a strip, or All")
         for address, card in self._cards.items():
             card.set_focused(address == self._focus)
+        if self._focus is None and self._bulk:
+            # The strip never reports state, so All mode shows the remembered one:
+            # On if any live target was last left on (a focused strip loads its own).
+            on = any(self._state_of(a)["power"] for a in self._edit_targets() if self._live(a))
+            if on != self._power_on:
+                self._power_on = on
+                self._update_power_visual()
         self._update_editor_enabled()
 
     # ---- color -----------------------------------------------------------
@@ -955,11 +1281,7 @@ class LedController(QWidget):
         self._color_timer.start()  # debounced send + tray icon update
 
     def _update_hero(self, color):
-        self._swatch.setStyleSheet(
-            f"background:{color.name()}; border:1px solid rgba(0,0,0,0.10);"
-            " border-radius:8px;"
-        )
-        # setText() doesn't fire returnPressed/editingFinished, so no feedback loop.
+        # setText() doesn't fire editingFinished, so no feedback loop.
         self._hex_input.setText(color.name().upper())
 
     def _apply_hex_input(self):
@@ -969,33 +1291,6 @@ class LedController(QWidget):
             self._picker.set_color(color)  # -> _on_picker_changed: updates + sends
         else:
             self._update_hero(self._base_color)  # invalid/unchanged: restore readout
-
-    # ---- brightness ------------------------------------------------------
-
-    def _build_brightness(self):
-        # Master dimmer: scales the picked colour client-side (scaled_color).
-        # Independent of the picker's V axis, which also dims -- the two compound.
-        label = QLabel("Brightness")
-        label.setObjectName("fieldLabel")
-        self._brightness_value = QLabel(f"{self._brightness}%")
-        self._brightness_value.setObjectName("cardSub")
-        head = QHBoxLayout()
-        head.addWidget(label)
-        head.addStretch()
-        head.addWidget(self._brightness_value)
-
-        self._brightness_slider = QSlider(Qt.Orientation.Horizontal)
-        self._brightness_slider.setObjectName("brightness")
-        self._brightness_slider.setRange(0, 100)
-        self._brightness_slider.setValue(self._brightness)
-        self._brightness_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._brightness_slider.valueChanged.connect(self._on_brightness_changed)
-
-        box = QVBoxLayout()
-        box.setSpacing(8)
-        box.addLayout(head)
-        box.addWidget(self._brightness_slider)
-        return box
 
     def _on_brightness_changed(self, value):
         self._brightness = value
@@ -1010,38 +1305,17 @@ class LedController(QWidget):
 
     # ---- color presets ---------------------------------------------------
 
-    def _build_presets(self):
-        # A grid of equal-width colour pills under a field label.
-        self._preset_btns = []
-        box = QVBoxLayout()
-        box.setSpacing(8)
-        presets_label = QLabel("Presets")
-        presets_label.setObjectName("fieldLabel")
-        box.addWidget(presets_label)
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        for i in range(len(self._presets)):
-            btn = QPushButton()
-            btn.setFixedHeight(30)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _checked=False, idx=i: self._apply_preset(idx))
-            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            btn.customContextMenuRequested.connect(lambda _pos, idx=i: self._save_preset(idx))
-            self._preset_btns.append(btn)
-            grid.addWidget(btn, i // PRESET_COLUMNS, i % PRESET_COLUMNS)
-        box.addLayout(grid)
-        self._refresh_presets()
-        return box
-
     def _refresh_presets(self):
-        for btn, hex_color in zip(self._preset_btns, self._presets):
-            btn.setStyleSheet(
-                f"QPushButton {{ background:{hex_color}; border:1px solid #D6DCE5;"
-                "  border-radius:10px; }"
-                "QPushButton:hover { border:2px solid #2563EB; }"
-            )
-            btn.setToolTip(f"{hex_color}  ·  left-click: apply · right-click: save current")
+        t = theme.current
+        for btns in (self._preset_btns, getattr(self, "_quick_btns", [])):
+            for btn, hex_color in zip(btns, self._presets):
+                btn.setStyleSheet(
+                    f"QPushButton {{ background:{hex_color}; border:1px solid {t['swatch_border']};"
+                    " border-radius:9px; }"
+                    f"QPushButton:hover {{ border:2px solid {t['ink']}; }}"
+                    f"QPushButton:disabled {{ background:{t['inset']}; border-color:{t['inset']}; }}"
+                )
+                btn.setToolTip(f"{hex_color}  (right-click saves the current colour here)")
 
     def _apply_preset(self, index):
         color = QColor(self._presets[index])
@@ -1057,7 +1331,21 @@ class LedController(QWidget):
 
     @asyncSlot()
     async def _on_color_timeout(self):
-        await self._send_base_color()
+        # One send in flight at a time. A BLE write can outlast the debounce
+        # (write-without-response blocks once the link's buffer is full); rather
+        # than pile up out-of-order frames, remember that a newer colour is waiting
+        # and send the latest once the current write returns.
+        if self._sending:
+            self._send_pending = True
+            return
+        self._sending = True
+        try:
+            await self._send_base_color()
+            while self._send_pending:
+                self._send_pending = False
+                await self._send_base_color()
+        finally:
+            self._sending = False
 
     async def _send_base_color(self):
         if self._tray is not None and self._tray_color_icon:
@@ -1124,6 +1412,7 @@ class LedController(QWidget):
     def _on_local_sync_toggled(self, controller, checked):
         self._local_sync[controller.card_id] = checked
         self._save_state()
+        self._refresh_focus_ui()   # a synced local makes the All editor usable
         if controller is self._msi:
             if not checked:
                 self._effect_timer.stop()
@@ -1190,17 +1479,23 @@ class LedController(QWidget):
         self._rebuild_list()
         self._save_state()
         self._set_status(
-            f"{len(devices)} device(s) found." if devices
-            else "No devices found."
+            f"{len(devices)} strip{'s' if len(devices) != 1 else ''} found." if devices
+            else "No strips found. Make sure they're powered and nearby."
         )
 
     @asyncSlot()
-    async def _on_connect_selected(self):
+    async def _on_link_clicked(self):
+        if self._connectable():
+            await self._connect_selected()
+        else:
+            await self._disconnect_all()
+
+    async def _connect_selected(self):
         targets = list(self._connectable())
         if not targets:
             self._set_status(
-                "Scan first, then tick an in-range device." if not self._scanned
-                else "Tick an in-range device to connect."
+                "Scan first, then tick an in-range strip." if not self._scanned
+                else "Tick an in-range strip to connect."
             )
             return
         self._idle = False            # explicit connect ends any idle release
@@ -1210,7 +1505,7 @@ class LedController(QWidget):
     async def _connect_many(self, addresses):
         await asyncio.gather(*(self._connect_one(a) for a in addresses))
         connected = sum(self._manager.is_connected(a) for a in addresses)
-        self._set_status(f"{connected}/{len(addresses)} device(s) connected.")
+        self._set_status(f"{connected}/{len(addresses)} strip(s) connected.")
 
     async def _connect_one(self, address):
         if self._manager.is_connected(address):
@@ -1224,8 +1519,7 @@ class LedController(QWidget):
         self._refresh_row(address)
         self._touch()  # a live link starts/refreshes the idle countdown
 
-    @asyncSlot()
-    async def _on_disconnect_all(self):
+    async def _disconnect_all(self):
         # Disconnect every connected device (checked or not) so nothing is orphaned.
         targets = list(self._manager.connected_addresses())
         self._desired.clear()
@@ -1239,7 +1533,7 @@ class LedController(QWidget):
         for address in targets:
             self._refresh_row(address)
         self._refresh_focus_ui()
-        self._set_status("All devices disconnected.")
+        self._set_status("All strips disconnected.")
 
     def _on_device_disconnect(self, address):
         # Called by the manager when a link drops (wanted or not).
@@ -1261,12 +1555,14 @@ class LedController(QWidget):
 
     async def _wake(self):
         # If we released the links to idle, bring the wanted ones back before a
-        # command lands. No-op when never connected or still live.
-        if self._idle and self._desired:
-            self._set_status("Reconnecting...")
-            await self._connect_many(list(self._desired))
-            if self._manager.connected_addresses():
-                self._idle = False
+        # command lands. No-op when never connected or still live. Serialised so
+        # a colour tick and a power press don't both start reconnecting.
+        async with self._wake_lock:
+            if self._idle and self._desired:
+                self._set_status("Reconnecting...")
+                await self._connect_many(list(self._desired))
+                if self._manager.connected_addresses():
+                    self._idle = False
 
     @asyncSlot()
     async def _on_idle(self):
@@ -1282,7 +1578,7 @@ class LedController(QWidget):
         )
         for address in targets:
             self._refresh_row(address)
-        self._set_status("Idle — released Bluetooth. Adjust to reconnect.")
+        self._set_status("Idle: Bluetooth released. Adjust anything to reconnect.")
 
     async def _reconnect(self, address):
         if address in self._reconnecting:
@@ -1302,6 +1598,7 @@ class LedController(QWidget):
                     await asyncio.sleep(RECONNECT_DELAY_S)
                     continue
                 self._refresh_row(address)
+                self._touch()  # the fresh link restarts the idle countdown
                 self._set_status(f"{self._display(address)}: reconnected.")
                 return
             self._set_status(f"{self._display(address)}: reconnect failed.")
@@ -1315,7 +1612,7 @@ class LedController(QWidget):
         strip, or all ticked). Returns True if it reached at least one device."""
         targets = [a for a in self._edit_targets() if self._manager.is_connected(a)]
         if not targets:
-            self._set_status("No checked-and-connected device.")
+            self._set_status("No ticked, connected strip.")
             return False
         results = await self._manager.apply(targets, action)
         failed = [a for a, exc in results.items() if exc is not None]
@@ -1323,12 +1620,16 @@ class LedController(QWidget):
             names = ", ".join(self._display(a) for a in failed)
             self._set_status(f"{len(targets) - len(failed)}/{len(targets)} applied. Failed: {names}")
         elif ok_status:
-            self._set_status(f"{ok_status} ({len(targets)} device(s))")
+            self._set_status(f"{ok_status} ({len(targets)} strip{'s' if len(targets) != 1 else ''})")
         return len(failed) < len(targets)
 
     def _update_power_visual(self):
-        self._power_btn.setText("On" if self._power_on else "Off")
-        self._power_btn.setProperty("on", "true" if self._power_on else "false")
+        t = theme.current
+        on = self._power_on
+        self._power_btn.setText("On" if on else "Off")
+        self._power_btn.setIcon(icon.glyph("power", t["primary_fg"] if on else t["disabled_fg"], 12, 2.4))
+        self._power_btn.setToolTip("Turn off" if on else "Turn on")
+        self._power_btn.setProperty("on", "true" if on else "false")
         _repolish(self._power_btn)
 
     async def _set_power(self, on):
@@ -1345,7 +1646,7 @@ class LedController(QWidget):
             ble_ok = False
             self._set_status(
                 ("Turned on." if on else "Turned off.") if local_ok
-                else "No checked-and-connected device."
+                else "No ticked, connected strip."
             )
         if ble_ok or local_ok:
             self._power_on = on
@@ -1358,27 +1659,10 @@ class LedController(QWidget):
     async def _on_power_toggle(self):
         await self._set_power(not self._power_on)
 
-    @asyncSlot()
-    async def _on_power_on(self):
-        await self._set_power(True)
-
-    @asyncSlot()
-    async def _on_power_off(self):
-        await self._set_power(False)
-
     # ---- tray / window ---------------------------------------------------
 
-    def _on_tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            self._toggle_window()
-        elif sys.platform == "darwin" and reason in (
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.Context,
-        ):
-            self._tray_menu.popup(QCursor.pos())  # see _setup_tray
-
     def _toggle_window(self):
-        if self.isVisible():
+        if self.isVisible() and not self.isMinimized():
             self.hide()
         else:
             self.show_window()
@@ -1405,7 +1689,7 @@ class LedController(QWidget):
             self.hide()
             self._tray.showMessage(
                 "Lumea",
-                "Still running in the tray. Quit via the tray menu.",
+                "Still running in the tray. Quit from the tray menu.",
                 QSystemTrayIcon.MessageIcon.Information,
                 2000,
             )
@@ -1444,6 +1728,8 @@ class LedController(QWidget):
                 self._local_sync["msi-mystic-light"] = self._settings.value("msi_sync", False, type=bool)
             self._settings.remove("msi_sync")
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
+        mode = self._settings.value("theme_mode", "auto")
+        self._theme_mode = mode if mode in THEME_MODES else "auto"
 
     def _save_state(self):
         self._settings.setValue("known_json", json.dumps(self._known))
@@ -1456,3 +1742,4 @@ class LedController(QWidget):
         self._settings.setValue("states_json", json.dumps(self._states))
         self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
         self._settings.setValue("effect_speed", self._effect_speed)
+        self._settings.setValue("theme_mode", self._theme_mode)

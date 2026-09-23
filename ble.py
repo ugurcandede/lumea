@@ -106,6 +106,7 @@ class DeviceManager:
     def __init__(self, on_disconnect: Callable[[str], None]):
         self._on_disconnect = on_disconnect
         self._devices: dict[str, ElkBledom] = {}
+        self._connecting: dict[str, asyncio.Task] = {}
 
     def is_connected(self, address: str) -> bool:
         return address in self._devices
@@ -114,8 +115,19 @@ class DeviceManager:
         return set(self._devices)
 
     async def connect(self, address: str) -> None:
+        # Callers overlap (idle wake from a colour tick and a power press, or a
+        # fault reconnect), so share one in-flight attempt per address instead of
+        # opening a second BleakClient to the same strip.
         if address in self._devices:
             return
+        task = self._connecting.get(address)
+        if task is None:
+            task = asyncio.ensure_future(self._connect(address))
+            self._connecting[address] = task
+            task.add_done_callback(lambda _t: self._connecting.pop(address, None))
+        await task
+
+    async def _connect(self, address: str) -> None:
         device = ElkBledom(address, on_disconnect=lambda: self._fire(address))
         await device.connect()
         self._devices[address] = device

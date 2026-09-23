@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
+import subprocess
 import sys
+from pathlib import Path
 
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
 import icon
-from theme import STYLESHEET
 from ui import LedController
 
 # Named local socket (Windows named pipe / Unix domain socket) used to detect a
@@ -27,8 +28,8 @@ def main() -> None:
     # QSettings keys off these (Windows registry, no extra files).
     app.setOrganizationName("ugurcandede")
     app.setApplicationName("Lumea")
-    app.setWindowIcon(icon.app_icon())
-    app.setStyleSheet(STYLESHEET)
+    app.setApplicationVersion(_app_version())
+    app.setWindowIcon(icon.app_icon())  # the theme sheet is applied by LedController
     # Closing the window hides to the tray; quit happens via the tray menu.
     app.setQuitOnLastWindowClosed(False)
 
@@ -57,6 +58,25 @@ def main() -> None:
     with loop:
         loop.run_until_complete(close_event.wait())
         _cancel_pending(loop)
+
+
+def _app_version() -> str:
+    """Packaged builds ship a version.txt written by CI; a source checkout reports
+    dev.<short git sha> (or plain "dev" outside git)."""
+    if getattr(sys, "frozen", False):
+        try:
+            return (Path(sys._MEIPASS) / "version.txt").read_text().strip() or "dev"
+        except Exception:
+            return "dev"
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent,
+            capture_output=True, text=True, timeout=2, check=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # no console flash on Windows
+        ).stdout.strip()
+        return f"dev.{sha}" if sha else "dev"
+    except Exception:
+        return "dev"
 
 
 def _ping_running_instance() -> bool:

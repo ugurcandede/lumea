@@ -59,10 +59,12 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
 ## Usage
 
 1. **Scan** — lists nearby strips.
-2. **Tick** the devices you want, then press **Connect Selected**. Double-click a row to set an **alias**.
-3. **On / Off** and the **color picker** (live) — commands go to every checked-and-connected device at once.
-4. **Presets** — the 12 swatches: left-click applies, right-click saves the current color.
-5. **Disconnect All** drops every connection.
+2. **Tick** the strips you want, then press **Connect**. Double-click a row to set an **alias**.
+3. Pick the target with the **Editing** chips — **All** ticked strips, or one strip — then use the **color picker**,
+   **brightness** and **power**; commands go to every connected target at once.
+4. **Presets** — the 12 dots: left-click applies, right-click saves the current color.
+5. **Disconnect** (the same button, once everything ticked is linked) drops every connection.
+6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, about.
 
 Closing the window keeps the app in the **system tray**. Checked devices, aliases, presets and the last color are saved
 and restored on launch, and dropped links auto-reconnect.
@@ -72,7 +74,8 @@ and restored on launch, and dropped links auto-reconnect.
 - Control **multiple strips at once**
 - Per-device **aliases**
 - **Live color** picker with 12 savable **presets**
-- **System tray** — runs in the background, icon reflects the current color
+- **System tray** — runs in the background; quick colours, power and settings from the menu, icon can reflect the current color
+- **Light / dark theme**, following the system or fixed
 - Settings persistence and auto-reconnect
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
 - **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless

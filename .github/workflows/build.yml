@@ -15,8 +15,38 @@ defaults:
     shell: bash
 
 jobs:
+  version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ needs.version.outputs.tag }}
+      version: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        run: |
+          # Bump the latest tag by the last commit message:
+          #   BREAKING:/bump: -> major, feat: -> minor, anything else -> patch.
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
+          MSG=$(git log -1 --pretty=%s)
+          if echo "$MSG" | grep -qiE '^(BREAKING|bump):'; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif echo "$MSG" | grep -qi '^feat:'; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          echo "tag=v${MAJOR}.${MINOR}.${PATCH}"     >> "$GITHUB_OUTPUT"
+          echo "version=${MAJOR}.${MINOR}.${PATCH}"  >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.artifact }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -40,6 +70,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Write version.txt
+        # Shown in Settings > About; source runs report dev.<sha> instead (see main.py).
+        run: echo "${{ needs.version.outputs.version }}" > version.txt
+
       - name: Build Windows .exe
         if: runner.os == 'Windows'
         run: |
@@ -47,6 +81,7 @@ jobs:
             --name Lumea \
             --icon assets/icon.ico \
             --add-data "assets/icon.png;assets" \
+            --add-data "version.txt;." \
             main.py
 
       - name: Build macOS .app
@@ -65,6 +100,7 @@ jobs:
             --icon assets/icon.icns \
             --osx-bundle-identifier com.ugurcandede.lumea \
             --add-data "assets/icon.png:assets" \
+            --add-data "version.txt:." \
             main.py
 
           # BLE app: macOS denies Bluetooth without a usage-description string in Info.plist.
@@ -96,7 +132,7 @@ jobs:
 
   release:
     name: Release + Homebrew cask
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -118,26 +154,6 @@ jobs:
           cp artifacts/Lumea-windows/Lumea.exe                  release/Lumea-windows.exe
           cp artifacts/Lumea-macos-arm64/Lumea-macos-arm64.zip  release/Lumea-macos-arm64.zip
 
-      - name: Determine version
-        id: version
-        run: |
-          # Bump the latest tag by the last commit message:
-          #   BREAKING:/bump: -> major, feat: -> minor, anything else -> patch.
-          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
-          MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
-          PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
-          MSG=$(git log -1 --pretty=%s)
-          if echo "$MSG" | grep -qiE '^(BREAKING|bump):'; then
-            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-          elif echo "$MSG" | grep -qi '^feat:'; then
-            MINOR=$((MINOR + 1)); PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-          echo "tag=v${MAJOR}.${MINOR}.${PATCH}"     >> "$GITHUB_OUTPUT"
-          echo "version=${MAJOR}.${MINOR}.${PATCH}"  >> "$GITHUB_OUTPUT"
-
       - name: SHA256 of the macOS zip
         id: sha
         run: echo "sha256=$(shasum -a 256 release/Lumea-macos-arm64.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
@@ -146,14 +162,14 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+          git tag -a "${{ needs.version.outputs.tag }}" -m "Release ${{ needs.version.outputs.tag }}"
+          git push origin "${{ needs.version.outputs.tag }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Lumea ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Lumea ${{ needs.version.outputs.tag }}
           generate_release_notes: true
           files: |
             release/Lumea-windows.exe
@@ -172,10 +188,10 @@ jobs:
         run: |
           git clone "https://x-access-token:${GH_TOKEN}@github.com/ugurcandede/homebrew-tap.git" /tmp/tap
           cd /tmp/tap
-          sed -i "s|version \".*\"|version \"${{ steps.version.outputs.version }}\"|" Casks/lumea.rb
+          sed -i "s|version \".*\"|version \"${{ needs.version.outputs.version }}\"|" Casks/lumea.rb
           sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha.outputs.sha256 }}\"|" Casks/lumea.rb
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Casks/lumea.rb
-          git commit -m "Update lumea cask to v${{ steps.version.outputs.version }}" || exit 0
+          git commit -m "Update lumea cask to v${{ needs.version.outputs.version }}" || exit 0
           git push

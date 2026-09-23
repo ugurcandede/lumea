@@ -19,3 +19,4 @@ dist/
 *.spec
 assets/icon.icns
 icon.iconset/
+version.txt

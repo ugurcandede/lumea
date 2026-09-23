@@ -1,12 +1,30 @@
 """Embedded visual color picker: a saturation/value square + a hue bar.
 
-Self-contained: shows its own swatch + hex readout and emits `colorChanged`
-on every move (click or drag). The host debounces the actual BLE writes.
+Emits `colorChanged` on every move (click or drag); the host debounces the
+actual BLE writes. Both surfaces are painted with rounded corners and, when
+the widget is disabled (no live strip to edit), as flat inset panels in the
+theme's colours.
 """
 
-from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QWidget
+
+import theme
+
+HEIGHT = 150
+RADIUS = 10
+
+
+def _clip(p, w, h, radius):
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(0, 0, w, h), radius, radius)
+    p.setClipPath(path)
+
+
+def _flat(p, w, h):
+    # Disabled look: a quiet inset panel instead of a greyed rainbow.
+    p.fillRect(0, 0, w, h, QColor(theme.current["inset"]))
 
 
 class _SVSquare(QWidget):
@@ -16,9 +34,8 @@ class _SVSquare(QWidget):
 
     def __init__(self):
         super().__init__()
-        # Grows to the card width; height fixed so it stays a pleasant rectangle.
-        self.setFixedHeight(200)
-        self.setMinimumWidth(240)
+        self.setFixedHeight(HEIGHT)
+        self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._hue = 0
@@ -41,7 +58,12 @@ class _SVSquare(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
+        _clip(p, w, h, RADIUS)
+        if not self.isEnabled():
+            _flat(p, w, h)
+            return
         sat = QLinearGradient(0, 0, w, 0)
         sat.setColorAt(0.0, QColor(255, 255, 255))
         sat.setColorAt(1.0, QColor.fromHsv(self._hue, 255, 255))
@@ -50,11 +72,13 @@ class _SVSquare(QWidget):
         val.setColorAt(0.0, QColor(0, 0, 0, 0))
         val.setColorAt(1.0, QColor(0, 0, 0, 255))
         p.fillRect(self.rect(), QBrush(val))
+        p.setClipping(False)
         x = self._sat / 255 * w
         y = (1 - self._val / 255) * h
-        p.setPen(QPen(QColor(255, 255, 255), 1))
-        p.drawEllipse(QPointF(x, y), 7, 7)
-        p.setPen(QPen(QColor(0, 0, 0), 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(QColor(0, 0, 0, 115), 1))
+        p.drawEllipse(QPointF(x, y), 7.5, 7.5)
+        p.setPen(QPen(QColor(255, 255, 255), 2))
         p.drawEllipse(QPointF(x, y), 6, 6)
 
     def mousePressEvent(self, event):
@@ -80,7 +104,7 @@ class _HueBar(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setFixedSize(28, 200)
+        self.setFixedSize(18, HEIGHT)
         self._hue = 0
 
     def hue(self):
@@ -92,14 +116,22 @@ class _HueBar(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
+        _clip(p, w, h, w / 2)
+        if not self.isEnabled():
+            _flat(p, w, h)
+            return
         grad = QLinearGradient(0, 0, 0, h)
         for i in range(7):
             grad.setColorAt(i / 6, QColor.fromHsv(round(359 * i / 6), 255, 255))
         p.fillRect(self.rect(), QBrush(grad))
-        y = int(self._hue / 359 * h)
-        p.setPen(QPen(QColor(255, 255, 255), 2))
-        p.drawLine(0, y, w, y)
+        p.setClipping(False)
+        y = self._hue / 359 * h
+        marker = QRectF(-2, y - 2.5, w + 4, 5)
+        p.setPen(QPen(QColor(0, 0, 0, 115), 1))
+        p.setBrush(QColor(255, 255, 255))
+        p.drawRoundedRect(marker, 2.5, 2.5)
 
     def mousePressEvent(self, event):
         self._pick(event)
@@ -118,31 +150,17 @@ class _HueBar(QWidget):
 class ColorPicker(QWidget):
     colorChanged = Signal(QColor)
 
-    def __init__(self, show_preview=True):
+    def __init__(self):
         super().__init__()
-        self._show_preview = show_preview
         self._sv = _SVSquare()
         self._bar = _HueBar()
-        self._swatch = QLabel()
-        self._swatch.setFixedHeight(28)
-        self._hex = QLabel()
-        self._hex.setObjectName("cardSub")  # muted readout, matches the theme
         self._sv.changed.connect(self._emit)
         self._bar.changed.connect(self._on_hue)
-
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(12)
-        top.addWidget(self._sv)
-        top.addWidget(self._bar)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(10)
-        root.addLayout(top)
-        if show_preview:
-            # The host can hide these and show its own preview instead.
-            root.addWidget(self._swatch)
-            root.addWidget(self._hex)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.addWidget(self._sv)
+        row.addWidget(self._bar)
 
     def color(self):
         return QColor.fromHsv(self._bar.hue(), self._sv.sat(), self._sv.val())
@@ -159,13 +177,4 @@ class ColorPicker(QWidget):
         self._emit()
 
     def _emit(self):
-        c = self.color()
-        if self._show_preview:
-            self._swatch.setStyleSheet(
-                f"background:{c.name()}; border:1px solid #D6DCE5; border-radius:10px;"
-            )
-            self._hex.setText(
-                f"{c.name()}    R{c.red()} G{c.green()} B{c.blue()}    "
-                f"H{max(c.hue(), 0)} S{c.saturation()} V{c.value()}"
-            )
-        self.colorChanged.emit(c)
+        self.colorChanged.emit(self.color())
