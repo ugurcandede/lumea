@@ -12,6 +12,7 @@ from qasync import QEventLoop
 
 import analytics
 import icon
+import updates
 from ui import LedController
 
 # Named local socket (Windows named pipe / Unix domain socket) used to detect a
@@ -40,6 +41,8 @@ def main() -> None:
         logging.info("Another instance is already running; bringing it to front.")
         sys.exit(0)
     server = _claim_instance_socket()
+    if updates.install_kind() == "exe":
+        updates.cleanup_previous()  # the exe a previous self-update left behind
 
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)

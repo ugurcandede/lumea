@@ -47,6 +47,7 @@ import icon
 import msi_mystic
 import steelseries
 import theme
+import updates
 
 log = logging.getLogger(__name__)
 
@@ -508,6 +509,8 @@ class LedController(QWidget):
         self._send_pending = False             # ...and a newer colour arrived meanwhile
         self._wake_lock = asyncio.Lock()       # one idle-wake at a time
         self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
+        self._update = None                    # newer release, if the check found one
+        self._update_state = "idle"            # idle | updating | not_in_brew_yet | failed
 
         self._load_state()
         self._base_color = self._load_color()
@@ -530,6 +533,16 @@ class LedController(QWidget):
 
         # Restore every synced local controller to the last colour.
         self._push_local_colors()
+
+        self._updates = updates.UpdateChecker(self)
+        self._updates.found.connect(self._set_update)
+        self._updates.installed.connect(self._quit)  # the relauncher starts the new build
+        self._updates.install_failed.connect(self._on_update_failed)
+        self._updates.check()
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(updates.CHECK_INTERVAL_MS)
+        self._update_timer.timeout.connect(self._updates.check)
+        self._update_timer.start()
 
     # ---- construction ----------------------------------------------------
 
@@ -594,6 +607,7 @@ class LedController(QWidget):
         col.setSpacing(0)
         col.addWidget(bar)
         col.addWidget(_rule())
+        col.addWidget(self._build_update_banner())
         # The whole editor section is hidden until something live can be edited.
         self._editor_section = self._build_editor()
         self._editor_rule = _rule()
@@ -603,6 +617,27 @@ class LedController(QWidget):
         col.addWidget(_rule())
         col.addWidget(status_box)
         return page
+
+    def _build_update_banner(self):
+        self._banner = QWidget()
+        outer = QHBoxLayout(self._banner)
+        outer.setContentsMargins(16, 10, 16, 0)
+        box = QFrame()
+        box.setObjectName("banner")
+        outer.addWidget(box)
+        row = QHBoxLayout(box)
+        row.setContentsMargins(10, 4, 4, 4)
+        row.setSpacing(4)
+        self._banner_label = _label("", "bannerText")
+        row.addWidget(self._banner_label)
+        row.addStretch()
+        self._update_btn = _button("", "bannerAction", self._start_update)
+        self._dismiss_btn = _button("×", "bannerAction", self._dismiss_update, "Hide until the next version")
+        for btn in (self._update_btn, self._dismiss_btn):
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            row.addWidget(btn)
+        self._banner.hide()
+        return self._banner
 
     def _build_editor(self):
         self._color_timer = QTimer(self)
@@ -973,6 +1008,55 @@ class LedController(QWidget):
             QSystemTrayIcon.ActivationReason.Context,
         ):
             self._tray_menu.popup(QCursor.pos())  # see _setup_tray
+
+    # ---- update banner ---------------------------------------------------
+
+    def _set_update(self, update):
+        if self._update_state == "updating":
+            return  # a daily re-check must not reset an install in flight
+        self._update = update
+        self._update_state = "idle"
+        self._banner.setVisible(update is not None)
+        self._render_banner()
+
+    def _on_update_failed(self, reason):
+        self._update_state = "not_in_brew_yet" if reason == "not_in_brew_yet" else "failed"
+        self._render_banner()
+
+    def _render_banner(self):
+        if self._update is None:
+            return
+        v = self._update.version
+        text, button, tip = {
+            "idle": (f"v{v} available", "update", f"Install v{v} and restart"),
+            "updating": (f"updating to v{v}…", "", ""),
+            "not_in_brew_yet": ("not in Homebrew yet", "retry",
+                                "Homebrew gets new versions a few minutes after the release"),
+            "failed": ("update failed", "retry", "Try again"),
+        }[self._update_state]
+        if self._update_state == "idle" and updates.install_kind() is None:
+            button, tip = "download", "Open the release page"
+        self._banner_label.setText(text)
+        self._update_btn.setText(button)
+        self._update_btn.setToolTip(tip)
+        self._update_btn.setVisible(bool(button))
+        self._dismiss_btn.setVisible(self._update_state != "updating")
+
+    def _start_update(self):
+        if self._update is None or self._update_state == "updating":
+            return
+        if updates.install_kind() is None:
+            QDesktopServices.openUrl(QUrl(self._update.url))
+            return
+        self._update_state = "updating"
+        self._render_banner()
+        self._updates.install()
+
+    def _dismiss_update(self):
+        if self._update is None:
+            return
+        updates.dismiss(self._update.version)
+        self._set_update(None)
 
     # ---- settings page ---------------------------------------------------
 

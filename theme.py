@@ -76,6 +76,15 @@ QLabel#rowStatus[state="stale"] { color: $faint; }
 QLabel#menuHeader { padding: 4px 10px 6px 10px; }
 QLabel#credits { font-size: 11px; color: $faint; line-height: 16px; }
 
+/* Update banner: inset strip under the title bar. */
+QFrame#banner { background-color: $inset; border-radius: 8px; }
+QLabel#bannerText { font-size: 12px; font-weight: 500; }
+QPushButton#bannerAction {
+    min-height: 20px; max-height: 20px; padding: 0 8px; border-radius: 6px; border: none;
+    background: transparent; color: $muted; font-size: 12px; font-weight: 500;
+}
+QPushButton#bannerAction:hover { background-color: $hover; color: $ink; }
+
 /* Title-bar buttons (settings, minimize, close) -- icon only. */
 QPushButton#winBtn {
     background: transparent; border: none; border-radius: 6px;
