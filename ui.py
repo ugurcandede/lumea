@@ -1851,6 +1851,8 @@ class LedController(QWidget):
         self._save_timer.start()       # persist the stamped state (coalesced; quit flushes)
         if self._animating():
             return                     # the effect / music tick drives every device meanwhile
+        if not self._power_on:
+            return                     # off: keep the colour for when it's turned on (_set_power)
         if self._bulk:
             self._push_local_colors()  # locals mirror the bulk colour, not a focus
         await self._wake()             # re-establish links if we released them to idle
@@ -2310,6 +2312,11 @@ class LedController(QWidget):
             ble_ok = await self._broadcast(
                 lambda d: d.set_power(on), "Turned on." if on else "Turned off."
             )
+            if on and ble_ok and not self._animating():
+                # The strip wakes in its old colour: send the one picked while it was off.
+                # (Locals already got it from _set_local_power.)
+                c, level = self._base_color, self._brightness
+                await self._broadcast(lambda d: d.set_color(c.red(), c.green(), c.blue(), level), None)
         else:
             ble_ok = False
             self._set_status(
