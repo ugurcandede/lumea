@@ -79,6 +79,7 @@ and restored on launch, and dropped links auto-reconnect.
 - Settings persistence and auto-reconnect
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
 - **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
+- **Music mode** *(Windows, optional)* — the lights follow whatever your PC is playing
 
 ## MSI motherboard RGB (optional · Windows)
 
@@ -97,6 +98,22 @@ If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea
 - **Static color only**, following the picker. No brick risk (plain HID output reports; nothing is written to onboard flash).
 - Verified on an **Apex 3** and a **Rival 650**. Other SteelSeries models are detected and left alone.
 
+## Music mode (optional · Windows)
+
+The **Music** chips under Brightness make the lights follow the system audio (WASAPI loopback via
+[`PyAudioWPatch`](https://pypi.org/project/PyAudioWPatch/) — no microphone, no virtual audio driver). Commands go to the
+same targets as the picker.
+
+- **Pulse** — the picked color, brightness following the music.
+- **Spectrum** — bass drives red, mids green, treble blue.
+- **Beat** — steps through your presets on every beat.
+- **Flow** — the hue keeps turning, faster the louder the music.
+- **Sensitivity** — raise it for quiet tracks and soft beats, lower it if the lights jump around.
+- **Bluetooth strips may lag behind the music.** BLE only carries so many color updates a second, and fewer the more
+  strips are connected; frames it can't keep up with are dropped. The USB devices (MSI, SteelSeries) follow closely.
+- Listens to the default output device at the moment a mode starts; after switching speakers or headphones, pick the
+  mode again.
+
 ## Privacy
 
 Once a day Lumea sends an anonymous ping to Google Analytics: a random install id and the app version. Nothing else —
@@ -111,6 +128,7 @@ analytics.py     one anonymous daily ping (opt-out in Settings)
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
 msi_mystic.py    optional MSI Mystic Light (USB HID) backend
 steelseries.py   optional SteelSeries Apex 3 / Rival 650 (USB HID) backend
+music.py         optional music mode: system-audio loopback + analysis
 ui.py            LedController: device list, color, presets, system tray
 colorpicker.py   embedded SV-square + hue-bar color picker
 icon.py          app icon + dynamic tray icon

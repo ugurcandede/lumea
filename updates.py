@@ -20,7 +20,7 @@ How the update is installed depends on where this process runs from:
 - Anything else, including a source checkout, gets the release page.
 
 Everything runs on the Qt loop: QNetworkAccessManager for the API call and the
-download, QProcess for brew. No threads (see CLAUDE.md).
+download, QProcess for brew. No threads.
 """
 
 import json
