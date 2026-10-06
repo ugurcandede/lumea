@@ -54,7 +54,7 @@ def swatch(color: QColor, size=14) -> QIcon:
 
 
 def glyph(kind: str, color, size=14, width=2.0) -> QIcon:
-    """Line icon: power, tune (settings), minus, close, back, down, check."""
+    """Line icon: power, tune (settings), minus, close, back, down, check, trash."""
     c = QColor(color)
     pixmap, p = _canvas(size)
     p.setPen(QPen(c, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
@@ -80,5 +80,12 @@ def glyph(kind: str, color, size=14, width=2.0) -> QIcon:
         p.drawPolyline([QPointF(s * 0.25, s * 0.38), QPointF(s / 2, s * 0.64), QPointF(s * 0.75, s * 0.38)])
     elif kind == "check":
         p.drawPolyline([QPointF(s * 0.2, s * 0.52), QPointF(s * 0.42, s * 0.74), QPointF(s * 0.8, s * 0.3)])
+    elif kind == "trash":
+        p.setPen(QPen(c, width * 0.75, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        p.drawLine(QPointF(s * 0.18, s * 0.28), QPointF(s * 0.82, s * 0.28))                  # lid
+        p.drawPolyline([QPointF(s * 0.38, s * 0.28), QPointF(s * 0.41, s * 0.15),
+                        QPointF(s * 0.59, s * 0.15), QPointF(s * 0.62, s * 0.28)])            # handle
+        p.drawPolyline([QPointF(s * 0.26, s * 0.28), QPointF(s * 0.31, s * 0.85),
+                        QPointF(s * 0.69, s * 0.85), QPointF(s * 0.74, s * 0.28)])            # body
     p.end()
     return QIcon(pixmap)

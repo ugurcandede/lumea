@@ -2,3 +2,5 @@ PySide6>=6.6
 qasync>=0.27
 bleak>=0.21
 hidapi>=0.14 ; sys_platform == "win32"  # MSI Mystic Light motherboard sync (optional)
+PyAudioWPatch>=0.2.12 ; sys_platform == "win32"  # music mode: WASAPI loopback (optional)
+numpy>=1.26 ; sys_platform == "win32"  # music mode analysis (optional)

@@ -128,6 +128,7 @@ QPushButton#menuBtn {
     border: 1px solid $line; background-color: $panel; font-size: 12px; font-weight: 500;
 }
 QPushButton#menuBtn:hover { border-color: $muted; }
+QPushButton#menuBtn:disabled { color: $disabled_fg; border-color: $disabled_bg; }
 
 /* Segmented control (Settings > Theme). */
 QWidget#segment { background-color: $inset; border-radius: 9px; }
