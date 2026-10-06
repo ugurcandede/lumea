@@ -48,10 +48,12 @@ import effects
 import icon
 import msi_mystic
 import music
+import plugins
 import protocol
 import steelseries
 import theme
 import updates
+from plugins.api import LumeaAPI
 
 log = logging.getLogger(__name__)
 
@@ -505,6 +507,7 @@ class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
         self.setWindowTitle("Lumea")
+        self.api = LumeaAPI(self)              # plugins' view of the app (see plugins/)
         # Frameless + translucent: the rounded QFrame#panel is the visible window.
         # Stays a normal top-level window (taskbar entry); fixed-size, so no resize.
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
@@ -571,6 +574,8 @@ class LedController(QWidget):
         self._wake_lock = asyncio.Lock()       # one idle-wake at a time
         self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
         self._update = None                    # newer release, if the check found one
+        self._plugins = {}                     # plugin name -> running instance
+        self._plugin_rows = {}                 # plugin name -> (switch, settings-widget slot)
         self._update_state = "idle"            # idle | updating | not_in_brew_yet | failed
 
         self._load_state()
@@ -605,6 +610,10 @@ class LedController(QWidget):
         self._update_timer.setInterval(updates.CHECK_INTERVAL_MS)
         self._update_timer.timeout.connect(self._updates.check)
         self._update_timer.start()
+
+        for plugin in plugins.PLUGINS:
+            if plugin.name in self._plugins_on:
+                self._start_plugin(plugin)
 
     # ---- construction ----------------------------------------------------
 
@@ -868,12 +877,14 @@ class LedController(QWidget):
         return col, chips, knob_row, preview
 
     def _on_sensitivity_changed(self, value):
+        self.api.notify()
         self._music_sensitivity = value
         if self._engine is not None:
             self._engine.sensitivity = value
         self._save_timer.start()
 
     def _on_fx_speed_changed(self, value):
+        self.api.notify()
         self._fx_speed = value
         self._save_timer.start()
 
@@ -986,12 +997,71 @@ class LedController(QWidget):
         col.addWidget(appearance)
         col.addWidget(_rule())
         col.addWidget(privacy)
+        if plugins.PLUGINS:
+            col.addWidget(_rule())
+            col.addWidget(self._build_plugins_section())
         col.addWidget(_rule())
         col.addWidget(about)
         col.addStretch()
         col.addWidget(self._credits)
         col.addSpacing(12)
         return page
+
+    def _build_plugins_section(self):
+        rows = []
+        for plugin in plugins.PLUGINS:
+            switch = _Switch()
+            switch.setChecked(plugin.name in self._plugins_on)
+            switch.toggled.connect(lambda on, p=plugin: self._on_plugin_toggled(p, on))
+            slot = QVBoxLayout()                   # the plugin's own settings widget, while on
+            slot.setContentsMargins(0, 0, 0, 6)
+            row = QWidget()
+            lay = QVBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(0)
+            lay.addWidget(self._pref_row(plugin.name, plugin.description, switch))
+            lay.addLayout(slot)
+            self._plugin_rows[plugin.name] = (switch, slot)
+            rows.append(row)
+        return self._section("Plugins", rows)
+
+    def _on_plugin_toggled(self, plugin, on):
+        if on:
+            self._plugins_on.add(plugin.name)
+            self._start_plugin(plugin)
+        else:
+            self._plugins_on.discard(plugin.name)
+            self._stop_plugin(plugin)
+        self._save_state()
+
+    def _start_plugin(self, plugin):
+        try:
+            instance = plugin(self.api)
+        except Exception as e:
+            log.exception("plugin %s failed to start", plugin.name)
+            self._set_status(f"{plugin.name} couldn't start: {e}")
+            self._plugin_rows[plugin.name][0].setChecked(False)   # -> _on_plugin_toggled(off)
+            return
+        self._plugins[plugin.name] = instance
+        widget = instance.settings_widget() if hasattr(instance, "settings_widget") else None
+        if widget is not None:
+            self._plugin_rows[plugin.name][1].addWidget(widget)
+
+    def _stop_plugin(self, plugin):
+        instance = self._plugins.pop(plugin.name, None)
+        if instance is None:
+            return
+        slot = self._plugin_rows[plugin.name][1]
+        while slot.count():
+            slot.takeAt(0).widget().deleteLater()
+        try:
+            instance.stop()
+        except Exception:
+            log.exception("plugin %s failed to stop", plugin.name)
+
+    def _stop_plugins(self):
+        for plugin in plugins.PLUGINS:
+            self._stop_plugin(plugin)
 
     def _section(self, title, rows):
         box = QWidget()
@@ -1338,6 +1408,7 @@ class LedController(QWidget):
         self._device_scroll.setFixedHeight(sum(heights) + (shown - 1) * gap)
 
     def _refresh_row(self, address):
+        self.api.notify()
         card = self._cards.get(address)
         if card is not None:
             card.set_name(self._display(address))
@@ -1353,6 +1424,7 @@ class LedController(QWidget):
         return f"{count} connected" if count else "Not connected"
 
     def _update_controls_visibility(self):
+        self.api.notify()
         connected = self._manager.connected_addresses()
         self._conn_label.setText(self._conn_summary())
         # One primary action: Connect while something ticked is in range and
@@ -1382,8 +1454,11 @@ class LedController(QWidget):
     def _on_card_rename(self, address):
         current = self._aliases.get(address, self._known.get(address, ""))
         text, ok = QInputDialog.getText(self, "Rename strip", f"Name for {address}:", text=current)
-        if not ok:
-            return
+        if ok:
+            self._rename(address, text)
+
+    def _rename(self, address, text):
+        # An empty name drops the alias (the strip shows its advertised name again).
         text = text.strip()
         if text:
             self._aliases[address] = text
@@ -1495,6 +1570,7 @@ class LedController(QWidget):
             self._on_card_focus(address)
 
     def _refresh_focus_ui(self):
+        self.api.notify()
         # Rebuild the target chips: All + every live strip, in list order.
         live = [a for a in sorted(self._known, key=lambda a: self._display(a).lower())
                 if self._live(a)]
@@ -1551,6 +1627,7 @@ class LedController(QWidget):
         self._color_timer.start()  # debounced send + tray icon update
 
     def _update_hero(self, color):
+        self.api.notify()
         # setText() doesn't fire editingFinished, so no feedback loop.
         self._hex_input.setText(color.name().upper())
 
@@ -1563,6 +1640,7 @@ class LedController(QWidget):
             self._update_hero(self._base_color)  # invalid/unchanged: restore readout
 
     def _on_brightness_changed(self, value):
+        self.api.notify()
         self._brightness = value
         self._brightness_value.setText(f"{value}%")
         if self._loading:
@@ -1576,6 +1654,7 @@ class LedController(QWidget):
     # ---- color presets ---------------------------------------------------
 
     def _refresh_presets(self):
+        self.api.notify()
         t = theme.current
         for btns in (self._preset_btns, getattr(self, "_quick_btns", [])):
             for btn, hex_color in zip(btns, self._presets):
@@ -1717,6 +1796,7 @@ class LedController(QWidget):
         self._set_msi_effect(mode)
 
     def _set_msi_effect(self, mode):
+        self.api.notify()
         self._msi_effect = mode
         self._fit_device_scroll()                  # the card grew/shrank its speed slider
         if mode == "rainbow":
@@ -1809,6 +1889,7 @@ class LedController(QWidget):
         self._refresh_live_ui()
 
     def _refresh_live_ui(self):
+        self.api.notify()
         for m, btn in self._fx_chips.items():
             btn.setChecked(m == (self._fx.mode if self._fx is not None else None))
         self._fx_speed_row.setVisible(self._fx is not None)
@@ -1852,7 +1933,9 @@ class LedController(QWidget):
         # One frame from the running effect / music, to the picker's targets.
         frame = (*rgb, self._brightness)
         preview = self._fx_preview if self._fx is not None else self._music_preview
-        preview.set_color(QColor(*protocol.scale_rgb(*rgb, self._brightness)))  # as the devices show it
+        shown = QColor(*protocol.scale_rgb(*rgb, self._brightness))  # as the devices show it
+        preview.set_color(shown)
+        self.api.frame.emit(shown.name())
         if (self._tray is not None and self._tray_color_icon and rgb != self._tray_rgb
                 and time.monotonic() >= self._tray_next):
             self._tray_rgb = rgb
@@ -2057,6 +2140,7 @@ class LedController(QWidget):
         return len(failed) < len(targets)
 
     def _update_power_visual(self):
+        self.api.notify()
         t = theme.current
         on = self._power_on
         self._power_btn.setText("On" if on else "Off")
@@ -2114,6 +2198,7 @@ class LedController(QWidget):
     def _quit(self):
         self._closing = True
         self._save_state()
+        self._stop_plugins()
         self._close_locals()
         self._close_event.set()
 
@@ -2131,6 +2216,7 @@ class LedController(QWidget):
             return
         self._closing = True
         self._save_state()
+        self._stop_plugins()
         self._close_locals()
         self._close_event.set()
         super().closeEvent(event)
@@ -2138,6 +2224,7 @@ class LedController(QWidget):
     # ---- helpers / persistence ------------------------------------------
 
     def _set_status(self, text):
+        self.api.notify()
         self._status.setText(text)
         log.info("status: %s", text)
 
@@ -2164,6 +2251,7 @@ class LedController(QWidget):
             self._settings.remove("msi_sync")
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
         self._fx_speed = self._settings.value("fx_speed", DEFAULT_EFFECT_SPEED, type=int)
+        self._plugins_on = set(json.loads(self._settings.value("plugins_json", "[]")))
         self._music_sensitivity = self._settings.value(
             "music_sensitivity", music.DEFAULT_SENSITIVITY, type=int)
         mode = self._settings.value("theme_mode", "auto")
@@ -2181,5 +2269,6 @@ class LedController(QWidget):
         self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
         self._settings.setValue("effect_speed", self._effect_speed)
         self._settings.setValue("fx_speed", self._fx_speed)
+        self._settings.setValue("plugins_json", json.dumps(sorted(self._plugins_on)))
         self._settings.setValue("music_sensitivity", self._music_sensitivity)
         self._settings.setValue("theme_mode", self._theme_mode)
