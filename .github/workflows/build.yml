@@ -69,6 +69,12 @@ jobs:
           - os: macos-14        # Apple Silicon (arm64)
             artifact: Lumea-macos-arm64
 
+    env:
+      # Where Nuitka keeps compiled C objects (MSVC's built-in cache on Windows,
+      # ccache on macOS) and its downloads; the "Cache Nuitka" step carries it
+      # between runs so a build only recompiles what changed.
+      NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-cache
+
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +87,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt nuitka ordered-set zstandard
+          # Nuitka uses ccache on macOS only if it's installed.
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ccache; fi
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NUITKA_CACHE_DIR }}
+          # A new entry per run (caches are immutable), restored from the newest one
+          # for this OS / Python / dependency set. Branch runs can't see master's
+          # entries and vice versa, so the first build on each side starts cold.
+          key: nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-${{ hashFiles('requirements.txt') }}-
+            nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-
 
       - name: Write version.txt
         # Shown in Settings > About; source runs report dev.<sha> instead (see main.py).
