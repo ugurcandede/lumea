@@ -114,9 +114,12 @@ jobs:
         # update can't end up running from a folder its predecessor deletes.
         # updates.cleanup_old_unpacks() removes the previous versions' folders; it
         # relies on this {COMPANY}/{PRODUCT}/{VERSION} layout.
+        # winrt imports foundation.collections at run time (reading an advert's
+        # service UUIDs), out of Nuitka's sight; without it every scan comes back empty.
         run: |
           python -m nuitka main.py \
             --mode=onefile \
+            --include-module=winrt.windows.foundation.collections \
             --msvc=latest \
             --assume-yes-for-downloads \
             --enable-plugins=pyside6 \
