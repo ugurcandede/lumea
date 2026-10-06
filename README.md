@@ -79,6 +79,7 @@ and restored on launch, and dropped links auto-reconnect.
 - Settings persistence and auto-reconnect
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
 - **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
+- **Effects** — Rainbow, Breathe and Cycle on every device, with a speed control
 - **Music mode** *(Windows, optional)* — the lights follow whatever your PC is playing
 
 ## MSI motherboard RGB (optional · Windows)
@@ -97,6 +98,12 @@ If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea
 - **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/), the same optional dependency as the MSI path.
 - **Static color only**, following the picker. No brick risk (plain HID output reports; nothing is written to onboard flash).
 - Verified on an **Apex 3** and a **Rival 650**. Other SteelSeries models are detected and left alone.
+
+## Effects
+
+The **Effect** chips under Brightness animate every device the picker drives: **Rainbow** turns through the
+colour wheel, **Breathe** fades the picked colour in and out, **Cycle** glides through your presets. **Speed** sets
+the pace. Only one effect or music mode runs at a time; Bluetooth strips get about 12 frames a second.
 
 ## Music mode (optional · Windows)
 
@@ -128,6 +135,7 @@ analytics.py     one anonymous daily ping (opt-out in Settings)
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
 msi_mystic.py    optional MSI Mystic Light (USB HID) backend
 steelseries.py   optional SteelSeries Apex 3 / Rival 650 (USB HID) backend
+effects.py       Rainbow / Breathe / Cycle colour maths
 music.py         optional music mode: system-audio loopback + analysis
 ui.py            LedController: device list, color, presets, system tray
 colorpicker.py   embedded SV-square + hue-bar color picker
