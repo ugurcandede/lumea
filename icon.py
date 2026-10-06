@@ -7,12 +7,12 @@ disc inside a ring drawn dark-over-light so it reads on both menubar shades.
 theme without image assets.
 """
 
-from pathlib import Path
-
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
-_ICON_FILE = Path(__file__).resolve().parent / "assets" / "icon.png"
+import updates
+
+_ICON_FILE = updates.bundled("assets/icon.png")
 
 
 def app_icon() -> QIcon:

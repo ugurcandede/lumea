@@ -69,6 +69,12 @@ jobs:
           - os: macos-14        # Apple Silicon (arm64)
             artifact: Lumea-macos-arm64
 
+    env:
+      # Where Nuitka keeps compiled C objects (MSVC's built-in cache on Windows,
+      # ccache on macOS) and its downloads; the "Cache Nuitka" step carries it
+      # between runs so a build only recompiles what changed.
+      NUITKA_CACHE_DIR: ${{ github.workspace }}/.nuitka-cache
+
     steps:
       - uses: actions/checkout@v4
 
@@ -80,7 +86,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt nuitka ordered-set zstandard
+          # Nuitka uses ccache on macOS only if it's installed.
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ccache; fi
+
+      - name: Cache Nuitka
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NUITKA_CACHE_DIR }}
+          # A new entry per run (caches are immutable), restored from the newest one
+          # for this OS / Python / dependency set. Branch runs can't see master's
+          # entries and vice versa, so the first build on each side starts cold.
+          key: nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-${{ hashFiles('requirements.txt') }}-${{ github.run_id }}
+          restore-keys: |
+            nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-${{ hashFiles('requirements.txt') }}-
+            nuitka-${{ runner.os }}-${{ runner.arch }}-py3.12-
 
       - name: Write version.txt
         # Shown in Settings > About; source runs report dev.<sha> instead (see main.py).
@@ -88,18 +108,35 @@ jobs:
 
       - name: Build Windows .exe
         if: runner.os == 'Windows'
+        # Nuitka, not PyInstaller: one exe that unpacks once per version into a kept
+        # folder, %LOCALAPPDATA%\ugurcandede\Lumea\<version> (the tempdir spec), instead
+        # of into a new Temp\_MEI... folder on every launch. Faster starts, and an
+        # update can't end up running from a folder its predecessor deletes.
+        # updates.cleanup_old_unpacks() removes the previous versions' folders; it
+        # relies on this {COMPANY}/{PRODUCT}/{VERSION} layout.
         run: |
-          pyinstaller --noconfirm --clean --windowed --onefile \
-            --name Lumea \
-            --icon assets/icon.ico \
-            --add-data "assets/icon.png;assets" \
-            --add-data "version.txt;." \
-            main.py
+          python -m nuitka main.py \
+            --mode=onefile \
+            --msvc=latest \
+            --assume-yes-for-downloads \
+            --enable-plugins=pyside6 \
+            --windows-console-mode=disable \
+            --windows-icon-from-ico=assets/icon.ico \
+            --include-data-files=assets/icon.png=assets/icon.png \
+            --include-data-files=version.txt=version.txt \
+            --company-name=ugurcandede \
+            --product-name=Lumea \
+            --file-version=${{ needs.version.outputs.version }} \
+            --product-version=${{ needs.version.outputs.version }} \
+            "--onefile-tempdir-spec={CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}" \
+            --onefile-cache-mode=cached \
+            --output-dir=dist \
+            --output-filename=Lumea.exe
 
       - name: Build macOS .app
         if: runner.os == 'macOS'
         run: |
-          # PyInstaller wants an .icns icon on macOS; build one from assets/icon.png.
+          # Nuitka wants an .icns icon on macOS; build one from assets/icon.png.
           mkdir -p icon.iconset
           for size in 16 32 128 256 512; do
             sips -z "$size" "$size"               assets/icon.png --out "icon.iconset/icon_${size}x${size}.png"
@@ -107,21 +144,40 @@ jobs:
           done
           iconutil -c icns icon.iconset -o assets/icon.icns
 
-          pyinstaller --noconfirm --clean --windowed \
-            --name Lumea \
-            --icon assets/icon.icns \
-            --osx-bundle-identifier com.ugurcandede.lumea \
-            --add-data "assets/icon.png:assets" \
-            --add-data "version.txt:." \
-            main.py
+          # BLE app: macOS denies Bluetooth without a usage-description string in
+          # Info.plist (--macos-app-protected-resource writes it).
+          python -m nuitka main.py \
+            --mode=app \
+            --assume-yes-for-downloads \
+            --enable-plugins=pyside6 \
+            --macos-app-name=Lumea \
+            --macos-signed-app-name=com.ugurcandede.lumea \
+            --macos-app-icon=assets/icon.icns \
+            --macos-app-version=${{ needs.version.outputs.version }} \
+            "--macos-app-protected-resource=NSBluetoothAlwaysUsageDescription:Lumea uses Bluetooth to control your LED strips." \
+            --include-data-files=assets/icon.png=assets/icon.png \
+            --include-data-files=version.txt=version.txt \
+            --output-dir=dist \
+            --output-filename=Lumea
+          APP=$(ls -d dist/*.app)
+          [ "$APP" = dist/Lumea.app ] || mv "$APP" dist/Lumea.app
 
-          # BLE app: macOS denies Bluetooth without a usage-description string in Info.plist.
-          plutil -insert NSBluetoothAlwaysUsageDescription \
-            -string "Lumea uses Bluetooth to control your LED strips." \
-            dist/Lumea.app/Contents/Info.plist
+          # Data files out of Contents/MacOS into Contents/Resources (updates.bundled
+          # finds them there): codesign seals non-code files in MacOS through xattrs,
+          # which unzip and the cask's `xattr -cr` strip, breaking the seal.
+          mv dist/Lumea.app/Contents/MacOS/version.txt dist/Lumea.app/Contents/MacOS/assets dist/Lumea.app/Contents/Resources/
 
-          # Ad-hoc sign so the bundle isn't flagged as "damaged" (still NOT notarized).
+          # Fail here, not on users' Macs, if the bundle isn't laid out as the app expects:
+          # the Bluetooth string (or macOS kills it on scan), and the data files.
+          plutil -p dist/Lumea.app/Contents/Info.plist | grep -q NSBluetoothAlwaysUsageDescription
+          test -f dist/Lumea.app/Contents/Resources/version.txt
+          test -f dist/Lumea.app/Contents/Resources/assets/icon.png
+
+          # Ad-hoc sign so the bundle isn't flagged as "damaged" (still NOT notarized), and
+          # check the seal survives what users and the cask do to it (xattr -cr).
           codesign --force --deep --sign - dist/Lumea.app
+          cp -R dist/Lumea.app "$RUNNER_TEMP/seal-check.app" && xattr -cr "$RUNNER_TEMP/seal-check.app"
+          codesign --verify --deep --strict "$RUNNER_TEMP/seal-check.app"
 
           # Zip the .app -- ditto preserves the bundle structure and symlinks.
           ditto -c -k --keepParent dist/Lumea.app "dist/${{ matrix.artifact }}.zip"
@@ -145,6 +201,9 @@ jobs:
   release:
     name: Release + Homebrew cask
     needs: [version, build]
+    # Publish only from master. A manual run on another branch (Actions > Build >
+    # Run workflow) stops at the build artifacts, so a build can be tried first.
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -51,6 +51,7 @@ def main() -> None:
     server = _claim_instance_socket()
     if updates.install_kind() == "exe":
         updates.cleanup_previous()  # the exe a previous self-update left behind
+        updates.cleanup_old_unpacks()  # ...and the unpack folder of the version it replaced
 
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
@@ -89,9 +90,9 @@ def main() -> None:
 def _app_version() -> str:
     """Packaged builds ship a version.txt written by CI; a source checkout reports
     dev.<short git sha> (or plain "dev" outside git)."""
-    if getattr(sys, "frozen", False):
+    if updates.packaged():
         try:
-            return (Path(sys._MEIPASS) / "version.txt").read_text().strip() or "dev"
+            return updates.bundled("version.txt").read_text().strip() or "dev"
         except Exception:
             return "dev"
     try:
