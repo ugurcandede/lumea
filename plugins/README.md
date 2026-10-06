@@ -70,6 +70,9 @@ class Plugin:
 
     def settings_widget(self):        # optional: a QWidget shown under the plugin's row on the Plugins page.
         ...                           # Called again on every refresh of the list: return a new widget each time.
+                                      # It gets the page's width (~370 px) and is squeezed if it wants more;
+                                      # don't force a width with setMinimumWidth, Qt would honour that and
+                                      # clip the panel.
 ```
 
 - Talk to the app **only** through `api` (`plugin_api.py`): `state()`, the `changed` / `frame` signals and the
