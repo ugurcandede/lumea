@@ -1,0 +1,23 @@
+name: Plugins
+
+# Merging to master publishes plugins: the app reads plugins/version.json straight
+# from the branch. This check keeps a broken index or a plugin that can't run in
+# the packaged app from getting there. See plugins/README.md.
+on:
+  push:
+    paths: ['plugins/**', 'plugin_runtime.py', 'tools/plugins.py', '*.py']
+  pull_request:
+    paths: ['plugins/**', 'plugin_runtime.py', 'tools/plugins.py', '*.py']
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/plugins.py check

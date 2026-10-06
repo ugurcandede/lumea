@@ -1,4 +1,4 @@
-"""LumeaAPI: the one surface plugins use to read and drive the app.
+"""LumeaAPI: the one surface plugins use to read and drive the app (see plugin_host.py).
 
 `state()` is a plain, JSON-ready snapshot; `changed` fires (coalesced, once per
 event-loop turn) whenever any of it may have moved, and `frame` carries each
@@ -19,6 +19,13 @@ from PySide6.QtWidgets import QSlider
 
 import effects
 import music
+
+
+# (major, minor). Additions to LumeaAPI bump the minor; anything that could break an
+# existing plugin (a removed or renamed member, a changed meaning) bumps the major
+# and resets the minor. A plugin declares the version it was written against as
+# "api" in plugins/version.json; see plugin_host.compatible().
+API_VERSION = (1, 0)
 
 
 class LumeaAPI(QObject):

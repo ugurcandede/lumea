@@ -48,12 +48,12 @@ import effects
 import icon
 import msi_mystic
 import music
-import plugins
 import protocol
 import steelseries
 import theme
 import updates
-from plugins.api import LumeaAPI
+from plugin_api import LumeaAPI
+from plugin_host import PluginHost
 
 log = logging.getLogger(__name__)
 
@@ -507,7 +507,7 @@ class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
         self.setWindowTitle("Lumea")
-        self.api = LumeaAPI(self)              # plugins' view of the app (see plugins/)
+        self.api = LumeaAPI(self)              # plugins' view of the app (see plugin_host.py)
         # Frameless + translucent: the rounded QFrame#panel is the visible window.
         # Stays a normal top-level window (taskbar entry); fixed-size, so no resize.
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
@@ -574,12 +574,12 @@ class LedController(QWidget):
         self._wake_lock = asyncio.Lock()       # one idle-wake at a time
         self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
         self._update = None                    # newer release, if the check found one
-        self._plugins = {}                     # plugin name -> running instance
-        self._plugin_rows = {}                 # plugin name -> (switch, settings-widget slot)
         self._update_state = "idle"            # idle | updating | not_in_brew_yet | failed
 
         self._load_state()
         self._base_color = self._load_color()
+        self._plugin_host = PluginHost(self.api, self._plugins_on, self)
+        self._plugin_host.changed.connect(self._on_plugins_changed)
         theme.apply(QApplication.instance(), self._theme_mode)
 
         self._build_ui()
@@ -611,9 +611,7 @@ class LedController(QWidget):
         self._update_timer.timeout.connect(self._updates.check)
         self._update_timer.start()
 
-        for plugin in plugins.PLUGINS:
-            if plugin.name in self._plugins_on:
-                self._start_plugin(plugin)
+        self._plugin_host.start_enabled()
 
     # ---- construction ----------------------------------------------------
 
@@ -997,9 +995,8 @@ class LedController(QWidget):
         col.addWidget(appearance)
         col.addWidget(_rule())
         col.addWidget(privacy)
-        if plugins.PLUGINS:
-            col.addWidget(_rule())
-            col.addWidget(self._build_plugins_section())
+        col.addWidget(_rule())
+        col.addWidget(self._build_plugins_section())
         col.addWidget(_rule())
         col.addWidget(about)
         col.addStretch()
@@ -1008,60 +1005,90 @@ class LedController(QWidget):
         return page
 
     def _build_plugins_section(self):
-        rows = []
-        for plugin in plugins.PLUGINS:
-            switch = _Switch()
-            switch.setChecked(plugin.name in self._plugins_on)
-            switch.toggled.connect(lambda on, p=plugin: self._on_plugin_toggled(p, on))
-            slot = QVBoxLayout()                   # the plugin's own settings widget, while on
-            slot.setContentsMargins(0, 0, 0, 6)
-            row = QWidget()
-            lay = QVBoxLayout(row)
-            lay.setContentsMargins(0, 0, 0, 0)
-            lay.setSpacing(0)
-            lay.addWidget(self._pref_row(plugin.name, plugin.description, switch))
-            lay.addLayout(slot)
-            self._plugin_rows[plugin.name] = (switch, slot)
-            rows.append(row)
-        return self._section("Plugins", rows)
+        # Rows are rebuilt from the host's list whenever it changes (_render_plugins).
+        self._plugin_note = _label("", "rowSub")
+        self._plugin_note.setWordWrap(True)
+        self._plugin_list = QVBoxLayout()
+        self._plugin_list.setContentsMargins(0, 0, 0, 0)
+        self._plugin_list.setSpacing(0)
+        box = QWidget()
+        box.setLayout(self._plugin_list)
+        section = self._section("Plugins", [self._plugin_note, box])
+        self._render_plugins()
+        return section
 
-    def _on_plugin_toggled(self, plugin, on):
-        if on:
-            self._plugins_on.add(plugin.name)
-            self._start_plugin(plugin)
+    def _render_plugins(self):
+        host = self._plugin_host
+        while self._plugin_list.count():
+            self._plugin_list.takeAt(0).widget().deleteLater()
+        rows = host.entries()
+        note = host.index_error or ("" if rows else "No plugins yet.")
+        if host.dev:
+            note = "Source run: plugins load from the repo's plugins/ folder."
+        self._plugin_note.setText(note)
+        self._plugin_note.setVisible(bool(note))
+        for row in rows:
+            self._plugin_list.addWidget(self._plugin_row(row))
+
+    def _plugin_row(self, row):
+        host = self._plugin_host
+        pid = row["id"]
+        if row["busy"]:
+            detail = row["busy"]
+        elif row["error"]:
+            detail = row["error"]
+        elif row["installed"] and row["update"]:
+            detail = f"v{row['installed']} · v{row['available']} available"
+        elif row["installed"]:
+            detail = f"v{row['installed']}"
         else:
-            self._plugins_on.discard(plugin.name)
-            self._stop_plugin(plugin)
-        self._save_state()
+            detail = f"v{row['available']}"
+        if row["problem"] and not row["busy"]:
+            detail += f" · {row['problem']}"
+        sub = _label(f"{row['description']}\n{detail}" if row["description"] else detail, "rowSub")
+        sub.setWordWrap(True)
 
-    def _start_plugin(self, plugin):
-        try:
-            instance = plugin(self.api)
-        except Exception as e:
-            log.exception("plugin %s failed to start", plugin.name)
-            self._set_status(f"{plugin.name} couldn't start: {e}")
-            self._plugin_rows[plugin.name][0].setChecked(False)   # -> _on_plugin_toggled(off)
-            return
-        self._plugins[plugin.name] = instance
+        controls = QWidget()
+        lay = QHBoxLayout(controls)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        can_get = not host.dev and not row["busy"] and not row["problem"]
+        if not row["installed"]:
+            btn = _button("Install", "ghost", lambda: asyncio.ensure_future(host.install(pid)))
+            btn.setEnabled(can_get)
+            lay.addWidget(btn)
+        else:
+            if row["update"]:
+                btn = _button("Update", "ghost", lambda: asyncio.ensure_future(host.install(pid)))
+                btn.setEnabled(can_get)
+                lay.addWidget(btn)
+            if not host.dev:
+                trash = _button("", "winBtn", lambda: host.remove(pid), "Remove this plugin")
+                trash.setProperty("glyph", "trash")
+                trash.setIcon(icon.glyph("trash", theme.current["muted"], 14))
+                trash.setEnabled(not row["busy"])
+                lay.addWidget(trash)
+            switch = _Switch()
+            switch.setChecked(row["running"])
+            switch.setEnabled(not row["busy"])
+            switch.toggled.connect(lambda on: host.set_enabled(pid, on))
+            lay.addWidget(switch)
+
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(self._pref_row(row["name"], sub, controls))
+        instance = host.running.get(pid)
         widget = instance.settings_widget() if hasattr(instance, "settings_widget") else None
-        if widget is not None:
-            self._plugin_rows[plugin.name][1].addWidget(widget)
+        if widget is not None:     # asked anew on every render (rows are rebuilt)
+            col.addWidget(widget)
+        return box
 
-    def _stop_plugin(self, plugin):
-        instance = self._plugins.pop(plugin.name, None)
-        if instance is None:
-            return
-        slot = self._plugin_rows[plugin.name][1]
-        while slot.count():
-            slot.takeAt(0).widget().deleteLater()
-        try:
-            instance.stop()
-        except Exception:
-            log.exception("plugin %s failed to stop", plugin.name)
-
-    def _stop_plugins(self):
-        for plugin in plugins.PLUGINS:
-            self._stop_plugin(plugin)
+    def _on_plugins_changed(self):
+        self._plugins_on = set(self._plugin_host.enabled)
+        self._save_state()
+        self._render_plugins()
 
     def _section(self, title, rows):
         box = QWidget()
@@ -1298,6 +1325,7 @@ class LedController(QWidget):
     # ---- settings page ---------------------------------------------------
 
     def _open_settings(self):
+        asyncio.ensure_future(self._plugin_host.refresh())
         self._stack.setCurrentIndex(1)
         self.show_window()
 
@@ -2198,7 +2226,7 @@ class LedController(QWidget):
     def _quit(self):
         self._closing = True
         self._save_state()
-        self._stop_plugins()
+        self._plugin_host.stop_all()
         self._close_locals()
         self._close_event.set()
 
@@ -2216,7 +2244,7 @@ class LedController(QWidget):
             return
         self._closing = True
         self._save_state()
-        self._stop_plugins()
+        self._plugin_host.stop_all()
         self._close_locals()
         self._close_event.set()
         super().closeEvent(event)
