@@ -96,10 +96,10 @@ jobs:
         # relies on this {COMPANY}/{PRODUCT}/{VERSION} layout.
         run: |
           python -m nuitka main.py \
-            --onefile \
+            --mode=onefile \
             --msvc=latest \
             --assume-yes-for-downloads \
-            --enable-plugin=pyside6 \
+            --enable-plugins=pyside6 \
             --windows-console-mode=disable \
             --windows-icon-from-ico=assets/icon.ico \
             --include-data-files=assets/icon.png=assets/icon.png \
@@ -109,6 +109,7 @@ jobs:
             --file-version=${{ needs.version.outputs.version }} \
             --product-version=${{ needs.version.outputs.version }} \
             "--onefile-tempdir-spec={CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}" \
+            --onefile-cache-mode=cached \
             --output-dir=dist \
             --output-filename=Lumea.exe
 
@@ -126,12 +127,11 @@ jobs:
           # BLE app: macOS denies Bluetooth without a usage-description string in
           # Info.plist (--macos-app-protected-resource writes it).
           python -m nuitka main.py \
-            --standalone \
-            --macos-create-app-bundle \
+            --mode=app \
             --assume-yes-for-downloads \
-            --enable-plugin=pyside6 \
+            --enable-plugins=pyside6 \
             --macos-app-name=Lumea \
-            --macos-signed-app-identifier=com.ugurcandede.lumea \
+            --macos-signed-app-name=com.ugurcandede.lumea \
             --macos-app-icon=assets/icon.icns \
             --macos-app-version=${{ needs.version.outputs.version }} \
             "--macos-app-protected-resource=NSBluetoothAlwaysUsageDescription:Lumea uses Bluetooth to control your LED strips." \
