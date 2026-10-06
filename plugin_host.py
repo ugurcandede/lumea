@@ -41,6 +41,7 @@ _FILES_URL = INDEX_URL.rsplit("/", 1)[0]
 _REPO_PLUGINS = Path(__file__).resolve().parent / "plugins"
 _TIMEOUT_MS = 15_000
 _META = "plugin.json"               # the index entry an installed copy came from
+_SWAP_TRIES = 8                     # x 0.25 s: how long a locked folder is waited for (_swap_in)
 
 
 def compatible(entry):
@@ -99,6 +100,8 @@ class PluginHost(QObject):
         found = {}
         if self._root.is_dir():
             for meta in self._root.glob(f"*/{_META}"):
+                if meta.parent.name.startswith("."):
+                    continue                # .<id>.new / .<id>.old: a swap in progress or cut short
                 try:
                     found[meta.parent.name] = json.loads(meta.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -173,8 +176,7 @@ class PluginHost(QObject):
             (staging / _META).write_text(json.dumps(entry, indent=2), encoding="utf-8")
             was_running = pid in self.running
             self._stop(pid)
-            shutil.rmtree(self._root / pid, ignore_errors=True)
-            staging.rename(self._root / pid)
+            await self._swap_in(staging, self._root / pid)
             if was_running:
                 self._start(pid)
         except Exception as e:
@@ -183,6 +185,28 @@ class PluginHost(QObject):
         finally:
             self._busy.pop(pid, None)
             self.changed.emit()
+
+    async def _swap_in(self, staging, target):
+        """Replace `target` with `staging` without ever leaving neither behind.
+
+        The old copy is moved aside first and only deleted once the new one is in
+        place; if the move fails it goes back. On Windows a just-written folder can
+        be briefly locked (antivirus scanning it), so the move is retried."""
+        backup = target.with_name(f".{target.name}.old")
+        shutil.rmtree(backup, ignore_errors=True)
+        if target.exists():
+            target.rename(backup)
+        for attempt in range(_SWAP_TRIES):
+            try:
+                staging.rename(target)
+                break
+            except OSError:
+                if attempt == _SWAP_TRIES - 1:
+                    if backup.exists():
+                        backup.rename(target)       # keep the working copy
+                    raise
+                await asyncio.sleep(0.25)
+        shutil.rmtree(backup, ignore_errors=True)
 
     def remove(self, pid):
         if self.dev:

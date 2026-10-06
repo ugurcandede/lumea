@@ -173,7 +173,22 @@ def _relaunch_windows(exe):
     # The new exe is already in place (renaming the running one is allowed), so
     # start it directly: no cmd, no console window, no fixed sleep.
     flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen([str(exe), AFTER_UPDATE_ARG], creationflags=flags, close_fds=True)
+    subprocess.Popen([str(exe), AFTER_UPDATE_ARG], creationflags=flags, close_fds=True,
+                     env=clean_environment())
+
+
+def clean_environment():
+    """This process's environment minus PyInstaller's own bookkeeping.
+
+    The onefile bootloader passes its unpack folder (_MEI...) to children through
+    _PYI_* variables. The new exe sits at the same path as this one, so it would
+    take itself for our child and run from *our* folder -- which is deleted when
+    we exit, leaving it without its tray icon, TLS libraries and the rest.
+    PYINSTALLER_RESET_ENVIRONMENT tells it to start from scratch instead.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 class UpdateChecker(QObject):
