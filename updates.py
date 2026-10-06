@@ -178,6 +178,7 @@ def _relaunch_windows(exe):
 
 class UpdateChecker(QObject):
     found = Signal(object)        # Update, or None when up to date
+    check_failed = Signal()       # GitHub unreachable (the banner keeps what it showed)
     installed = Signal()          # the new build is in place and relaunching; quit now
     install_failed = Signal(str)  # "not_in_brew_yet" | "brew_error" | "download" | "exe_swap"
 
@@ -185,7 +186,8 @@ class UpdateChecker(QObject):
         super().__init__(parent)
         self._nam = QNetworkAccessManager(self)
 
-    def check(self):
+    def check(self, manual=False):
+        """``manual`` (the Settings button) also re-offers a dismissed version."""
         request = QNetworkRequest(QUrl(_API))
         request.setRawHeader(b"Accept", b"application/vnd.github+json")
         request.setTransferTimeout(_TIMEOUT_MS)
@@ -195,8 +197,10 @@ class UpdateChecker(QObject):
             reply.deleteLater()
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 log.debug("update check failed: %s", reply.errorString())
+                self.check_failed.emit()
                 return  # keep whatever was shown; the daily check tries again
-            self.found.emit(parse_release(bytes(reply.readAll()), current_version(), dismissed_version()))
+            dismissed = None if manual else dismissed_version()
+            self.found.emit(parse_release(bytes(reply.readAll()), current_version(), dismissed))
 
         reply.finished.connect(done)
 

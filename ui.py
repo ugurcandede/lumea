@@ -581,6 +581,7 @@ class LedController(QWidget):
         self._updates.found.connect(self._set_update)
         self._updates.installed.connect(self._quit)  # the relauncher starts the new build
         self._updates.install_failed.connect(self._on_update_failed)
+        self._updates.check_failed.connect(lambda: self._on_check_result(failed=True))
         self._updates.check()
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updates.CHECK_INTERVAL_MS)
@@ -921,8 +922,12 @@ class LedController(QWidget):
         ])
 
         open_url = lambda url: (lambda: QDesktopServices.openUrl(QUrl(url)))
+        self._update_check_label = _label("Checks GitHub for a newer version", "rowSub")
+        self._update_check_label.setWordWrap(True)
+        self._update_check_btn = _button("Check now", "ghost", self._check_updates_now)
         about = self._section("About", [
             self._pref_row("Lumea", "Desktop control for ELK-BLEDOM and MELK LED strips"),
+            self._pref_row("Updates", self._update_check_label, self._update_check_btn),
             self._pref_row("Open source", "MIT license. Built with PySide6, bleak and qasync.",
                            _button("View on GitHub", "ghost", open_url(GITHUB_URL))),
         ])
@@ -1112,7 +1117,26 @@ class LedController(QWidget):
 
     # ---- update banner ---------------------------------------------------
 
+    def _check_updates_now(self):
+        self._update_check_btn.setEnabled(False)
+        self._update_check_label.setText("Checking…")
+        self._updates.check(manual=True)
+
+    def _on_check_result(self, update=None, failed=False):
+        # Only answers the Settings button; the daily check stays silent.
+        if self._update_check_btn.isEnabled():
+            return
+        self._update_check_btn.setEnabled(True)
+        if failed:
+            text = "Couldn't reach GitHub. Try again later."
+        elif update is not None:
+            text = f"v{update.version} is available. Use the banner on the main page to install it."
+        else:
+            text = f"You're on the latest version ({updates.current_version()})."
+        self._update_check_label.setText(text)
+
     def _set_update(self, update):
+        self._on_check_result(update)
         if self._update_state == "updating":
             return  # a daily re-check must not reset an install in flight
         self._update = update
