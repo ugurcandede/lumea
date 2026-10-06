@@ -4,3 +4,4 @@ bleak>=0.21
 hidapi>=0.14 ; sys_platform == "win32"  # MSI Mystic Light motherboard sync (optional)
 PyAudioWPatch>=0.2.12 ; sys_platform == "win32"  # music mode: WASAPI loopback (optional)
 numpy>=1.26 ; sys_platform == "win32"  # music mode analysis (optional)
+segno>=1.6  # QR codes for plugins (see plugin_runtime.py)

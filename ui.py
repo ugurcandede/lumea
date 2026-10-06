@@ -52,6 +52,8 @@ import protocol
 import steelseries
 import theme
 import updates
+from plugin_api import LumeaAPI
+from plugin_host import PluginHost
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +92,7 @@ DEFAULT_PRESETS = [
 ]
 PANEL_WIDTH = 400
 DEVICE_ROWS_SHOWN = 4          # the list scrolls past this many rows
+PLUGIN_LIST_MAX_H = 520        # the Plugins page scrolls past this height
 THEME_MODES = ("auto", "light", "dark")
 GITHUB_URL = "https://github.com/ugurcandede/Lumea"
 AUTHOR_URL = "https://github.com/ugurcandede"
@@ -505,6 +508,7 @@ class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
         self.setWindowTitle("Lumea")
+        self.api = LumeaAPI(self)              # plugins' view of the app (see plugin_host.py)
         # Frameless + translucent: the rounded QFrame#panel is the visible window.
         # Stays a normal top-level window (taskbar entry); fixed-size, so no resize.
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
@@ -575,6 +579,8 @@ class LedController(QWidget):
 
         self._load_state()
         self._base_color = self._load_color()
+        self._plugin_host = PluginHost(self.api, self._plugins_on, self)
+        self._plugin_host.changed.connect(self._on_plugins_changed)
         theme.apply(QApplication.instance(), self._theme_mode)
 
         self._build_ui()
@@ -606,6 +612,8 @@ class LedController(QWidget):
         self._update_timer.timeout.connect(self._updates.check)
         self._update_timer.start()
 
+        self._plugin_host.start_enabled()
+
     # ---- construction ----------------------------------------------------
 
     def _build_ui(self):
@@ -616,6 +624,7 @@ class LedController(QWidget):
         self._stack = _Stack()
         self._stack.addWidget(self._build_main_page())
         self._stack.addWidget(self._build_settings_page())
+        self._stack.addWidget(self._build_plugins_page())
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._stack)
@@ -868,12 +877,14 @@ class LedController(QWidget):
         return col, chips, knob_row, preview
 
     def _on_sensitivity_changed(self, value):
+        self.api.notify()
         self._music_sensitivity = value
         if self._engine is not None:
             self._engine.sensitivity = value
         self._save_timer.start()
 
     def _on_fx_speed_changed(self, value):
+        self.api.notify()
         self._fx_speed = value
         self._save_timer.start()
 
@@ -987,11 +998,192 @@ class LedController(QWidget):
         col.addWidget(_rule())
         col.addWidget(privacy)
         col.addWidget(_rule())
+        self._plugins_summary = _label("", "rowSub")
+        col.addWidget(self._section("Plugins", [
+            self._pref_row("Manage plugins", self._plugins_summary,
+                           _button("Manage", "ghost", self._open_plugins)),
+        ]))
+        col.addWidget(_rule())
         col.addWidget(about)
         col.addStretch()
         col.addWidget(self._credits)
         col.addSpacing(12)
         return page
+
+    def _build_plugins_page(self):
+        # Two lists, rebuilt from the host whenever it changes (_render_plugins):
+        # Installed (switch, update, remove, the plugin's own panel) and Available
+        # (install). The page scrolls once it outgrows PLUGIN_LIST_MAX_H.
+        back = self._win_button("back", self._close_plugins, "Back")
+        min_btn = self._win_button("minus", self.showMinimized, "Minimize")
+        close_btn = self._win_button("close", self.close, "Close to tray")
+        bar = _TitleBar()
+        bar.setObjectName("titleBar")
+        bar.setFixedHeight(44)
+        header = QHBoxLayout(bar)
+        header.setContentsMargins(8, 0, 8, 0)
+        header.setSpacing(6)
+        header.addWidget(back)
+        header.addWidget(_label("Plugins", "appName"))
+        header.addStretch()
+        header.addWidget(min_btn)
+        header.addWidget(close_btn)
+
+        self._plugin_note = _label("", "rowSub")
+        self._plugin_note.setWordWrap(True)
+        self._plugin_lists = {}
+        sections = []
+        for key, title in (("installed", "Installed"), ("available", "Available")):
+            empty = _label("", "rowSub")
+            empty.setWordWrap(True)
+            rows = QVBoxLayout()
+            rows.setContentsMargins(0, 0, 0, 0)
+            rows.setSpacing(0)
+            box = QWidget()
+            box.setLayout(rows)
+            self._plugin_lists[key] = (rows, empty)
+            sections.append(self._section(title, [empty, box]))
+
+        content = QWidget()
+        col = QVBoxLayout(content)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(sections[0])
+        col.addWidget(_rule())
+        col.addWidget(sections[1])
+        self._plugin_scroll = QScrollArea()
+        self._plugin_scroll.setObjectName("deviceScroll")   # same transparent scroll style
+        self._plugin_scroll.setWidgetResizable(True)
+        self._plugin_scroll.setWidget(content)
+        self._plugin_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._plugin_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        note_box = QWidget()
+        note_lay = QHBoxLayout(note_box)
+        note_lay.setContentsMargins(16, 10, 16, 0)
+        note_lay.addWidget(self._plugin_note)
+
+        page = QWidget()
+        page_col = QVBoxLayout(page)
+        page_col.setContentsMargins(0, 0, 0, 0)
+        page_col.setSpacing(0)
+        page_col.addWidget(bar)
+        page_col.addWidget(_rule())
+        page_col.addWidget(note_box)
+        page_col.addWidget(self._plugin_scroll)
+        page_col.addSpacing(6)
+        self._render_plugins()
+        return page
+
+    def _open_plugins(self):
+        asyncio.ensure_future(self._plugin_host.refresh())
+        self._stack.setCurrentIndex(2)
+
+    def _close_plugins(self):
+        self._stack.setCurrentIndex(1)
+
+    def _render_plugins(self):
+        host = self._plugin_host
+        rows = host.entries()
+        installed = [r for r in rows if r["installed"]]
+        available = [r for r in rows if not r["installed"]]
+
+        if host.dev:
+            note = "Source run: plugins load from the repo's plugins/ folder."
+        else:
+            note = host.index_error or ""
+        self._plugin_note.setText(note)
+        self._plugin_note.parentWidget().setVisible(bool(note))
+
+        for key, items, empty_text in (
+                ("installed", installed, "Nothing installed yet."),
+                ("available", available, "" if host.index_error else "Every plugin is installed.")):
+            layout, empty = self._plugin_lists[key]
+            while layout.count():
+                layout.takeAt(0).widget().deleteLater()
+            for row in items:
+                layout.addWidget(self._plugin_row(row))
+            empty.setText(empty_text)
+            empty.setVisible(not items and bool(empty_text))
+
+        updates_n = sum(r["update"] for r in installed)
+        on = sum(r["running"] for r in installed)
+        parts = [f"{len(installed)} installed" if installed else "None installed"]
+        if on:
+            parts.append(f"{on} on")
+        if updates_n:
+            parts.append(f"{updates_n} update{'s' if updates_n != 1 else ''}")
+        self._plugins_summary.setText(" · ".join(parts))
+        # Next turn: rows added to a visible page are shown (and counted by the
+        # layout) only once the event loop runs, so measuring now comes up short.
+        QTimer.singleShot(0, self._fit_plugin_scroll)
+
+    def _fit_plugin_scroll(self):
+        # Like the device list: size the scroll area to its content, up to a cap.
+        # Wrapped labels make the height depend on the width: ask at the panel's.
+        lay = self._plugin_scroll.widget().layout()
+        height = lay.totalHeightForWidth(PANEL_WIDTH) if lay.hasHeightForWidth() else lay.sizeHint().height()
+        self._plugin_scroll.setFixedHeight(min(height, PLUGIN_LIST_MAX_H))
+
+    def _plugin_row(self, row):
+        host = self._plugin_host
+        pid = row["id"]
+        if row["busy"]:
+            detail = row["busy"]
+        elif row["error"]:
+            detail = row["error"]
+        elif row["installed"] and row["update"]:
+            detail = f"v{row['installed']} · v{row['available']} available"
+        elif row["installed"]:
+            detail = f"v{row['installed']}"
+        else:
+            detail = f"v{row['available']}"
+        if row["problem"] and not row["busy"]:
+            detail += f" · {row['problem']}"
+        sub = _label(f"{row['description']}\n{detail}" if row["description"] else detail, "rowSub")
+        sub.setWordWrap(True)
+
+        controls = QWidget()
+        lay = QHBoxLayout(controls)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        can_get = not host.dev and not row["busy"] and not row["problem"]
+        if not row["installed"]:
+            btn = _button("Install", "ghost", lambda: asyncio.ensure_future(host.install(pid)))
+            btn.setEnabled(can_get)
+            lay.addWidget(btn)
+        else:
+            if row["update"]:
+                btn = _button("Update", "ghost", lambda: asyncio.ensure_future(host.install(pid)))
+                btn.setEnabled(can_get)
+                lay.addWidget(btn)
+            if not host.dev:
+                trash = _button("", "winBtn", lambda: host.remove(pid), "Remove this plugin")
+                trash.setProperty("glyph", "trash")
+                trash.setIcon(icon.glyph("trash", theme.current["muted"], 14))
+                trash.setEnabled(not row["busy"])
+                lay.addWidget(trash)
+            switch = _Switch()
+            switch.setChecked(row["running"])
+            switch.setEnabled(not row["busy"])
+            switch.toggled.connect(lambda on: host.set_enabled(pid, on))
+            lay.addWidget(switch)
+
+        box = QWidget()
+        col = QVBoxLayout(box)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(self._pref_row(row["name"], sub, controls))
+        instance = host.running.get(pid)
+        widget = instance.settings_widget() if hasattr(instance, "settings_widget") else None
+        if widget is not None:     # asked anew on every render (rows are rebuilt)
+            col.addWidget(widget)
+        return box
+
+    def _on_plugins_changed(self):
+        self._plugins_on = set(self._plugin_host.enabled)
+        self._save_state()
+        self._render_plugins()
 
     def _section(self, title, rows):
         box = QWidget()
@@ -1338,6 +1530,7 @@ class LedController(QWidget):
         self._device_scroll.setFixedHeight(sum(heights) + (shown - 1) * gap)
 
     def _refresh_row(self, address):
+        self.api.notify()
         card = self._cards.get(address)
         if card is not None:
             card.set_name(self._display(address))
@@ -1353,6 +1546,7 @@ class LedController(QWidget):
         return f"{count} connected" if count else "Not connected"
 
     def _update_controls_visibility(self):
+        self.api.notify()
         connected = self._manager.connected_addresses()
         self._conn_label.setText(self._conn_summary())
         # One primary action: Connect while something ticked is in range and
@@ -1382,8 +1576,11 @@ class LedController(QWidget):
     def _on_card_rename(self, address):
         current = self._aliases.get(address, self._known.get(address, ""))
         text, ok = QInputDialog.getText(self, "Rename strip", f"Name for {address}:", text=current)
-        if not ok:
-            return
+        if ok:
+            self._rename(address, text)
+
+    def _rename(self, address, text):
+        # An empty name drops the alias (the strip shows its advertised name again).
         text = text.strip()
         if text:
             self._aliases[address] = text
@@ -1495,6 +1692,7 @@ class LedController(QWidget):
             self._on_card_focus(address)
 
     def _refresh_focus_ui(self):
+        self.api.notify()
         # Rebuild the target chips: All + every live strip, in list order.
         live = [a for a in sorted(self._known, key=lambda a: self._display(a).lower())
                 if self._live(a)]
@@ -1551,6 +1749,7 @@ class LedController(QWidget):
         self._color_timer.start()  # debounced send + tray icon update
 
     def _update_hero(self, color):
+        self.api.notify()
         # setText() doesn't fire editingFinished, so no feedback loop.
         self._hex_input.setText(color.name().upper())
 
@@ -1563,6 +1762,7 @@ class LedController(QWidget):
             self._update_hero(self._base_color)  # invalid/unchanged: restore readout
 
     def _on_brightness_changed(self, value):
+        self.api.notify()
         self._brightness = value
         self._brightness_value.setText(f"{value}%")
         if self._loading:
@@ -1576,6 +1776,7 @@ class LedController(QWidget):
     # ---- color presets ---------------------------------------------------
 
     def _refresh_presets(self):
+        self.api.notify()
         t = theme.current
         for btns in (self._preset_btns, getattr(self, "_quick_btns", [])):
             for btn, hex_color in zip(btns, self._presets):
@@ -1717,6 +1918,7 @@ class LedController(QWidget):
         self._set_msi_effect(mode)
 
     def _set_msi_effect(self, mode):
+        self.api.notify()
         self._msi_effect = mode
         self._fit_device_scroll()                  # the card grew/shrank its speed slider
         if mode == "rainbow":
@@ -1809,6 +2011,7 @@ class LedController(QWidget):
         self._refresh_live_ui()
 
     def _refresh_live_ui(self):
+        self.api.notify()
         for m, btn in self._fx_chips.items():
             btn.setChecked(m == (self._fx.mode if self._fx is not None else None))
         self._fx_speed_row.setVisible(self._fx is not None)
@@ -1852,7 +2055,9 @@ class LedController(QWidget):
         # One frame from the running effect / music, to the picker's targets.
         frame = (*rgb, self._brightness)
         preview = self._fx_preview if self._fx is not None else self._music_preview
-        preview.set_color(QColor(*protocol.scale_rgb(*rgb, self._brightness)))  # as the devices show it
+        shown = QColor(*protocol.scale_rgb(*rgb, self._brightness))  # as the devices show it
+        preview.set_color(shown)
+        self.api.frame.emit(shown.name())
         if (self._tray is not None and self._tray_color_icon and rgb != self._tray_rgb
                 and time.monotonic() >= self._tray_next):
             self._tray_rgb = rgb
@@ -2057,6 +2262,7 @@ class LedController(QWidget):
         return len(failed) < len(targets)
 
     def _update_power_visual(self):
+        self.api.notify()
         t = theme.current
         on = self._power_on
         self._power_btn.setText("On" if on else "Off")
@@ -2114,6 +2320,7 @@ class LedController(QWidget):
     def _quit(self):
         self._closing = True
         self._save_state()
+        self._plugin_host.stop_all()
         self._close_locals()
         self._close_event.set()
 
@@ -2131,6 +2338,7 @@ class LedController(QWidget):
             return
         self._closing = True
         self._save_state()
+        self._plugin_host.stop_all()
         self._close_locals()
         self._close_event.set()
         super().closeEvent(event)
@@ -2138,6 +2346,7 @@ class LedController(QWidget):
     # ---- helpers / persistence ------------------------------------------
 
     def _set_status(self, text):
+        self.api.notify()
         self._status.setText(text)
         log.info("status: %s", text)
 
@@ -2164,6 +2373,7 @@ class LedController(QWidget):
             self._settings.remove("msi_sync")
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
         self._fx_speed = self._settings.value("fx_speed", DEFAULT_EFFECT_SPEED, type=int)
+        self._plugins_on = set(json.loads(self._settings.value("plugins_json", "[]")))
         self._music_sensitivity = self._settings.value(
             "music_sensitivity", music.DEFAULT_SENSITIVITY, type=int)
         mode = self._settings.value("theme_mode", "auto")
@@ -2181,5 +2391,6 @@ class LedController(QWidget):
         self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
         self._settings.setValue("effect_speed", self._effect_speed)
         self._settings.setValue("fx_speed", self._fx_speed)
+        self._settings.setValue("plugins_json", json.dumps(sorted(self._plugins_on)))
         self._settings.setValue("music_sensitivity", self._music_sensitivity)
         self._settings.setValue("theme_mode", self._theme_mode)
