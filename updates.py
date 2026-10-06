@@ -7,11 +7,11 @@ hidden until a newer one is published.
 
 How the update is installed depends on where this process runs from:
 
-- Windows, frozen: the new exe is downloaded next to the running one, the
+- Windows, packaged: the new exe is downloaded next to the running one, the
   running one is renamed out of the way (Windows refuses to delete or overwrite
   a running exe but allows renaming it), the download moves into place and a
   detached relauncher starts it once we have quit.
-- macOS, frozen, running from the bundle Homebrew installed: `brew upgrade
+- macOS, packaged, running from the bundle Homebrew installed: `brew upgrade
   --cask` replaces the bundle on disk, then the app quits and reopens itself.
   brew would normally quit the app first (the cask's `uninstall quit:`), but it
   never quits an app it finds among its own parent processes. Only the bundle
@@ -26,6 +26,8 @@ download, QProcess for brew. No threads.
 import json
 import logging
 import os
+import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -93,9 +95,22 @@ def dismiss(latest):
     QSettings().setValue("update_dismissed_version", latest)
 
 
+def packaged():
+    """True in a built app (Nuitka leaves __compiled__ in every module it
+    compiled), False in a source run."""
+    return "__compiled__" in globals()
+
+
+def app_exe():
+    """The program the user launched: Lumea.exe on Windows (the file an update
+    replaces), Lumea.app/Contents/MacOS/Lumea on macOS. Not sys.executable: in
+    Nuitka's onefile that is the interpreter unpacked into the cache folder."""
+    return Path(sys.argv[0]).resolve()
+
+
 def install_kind():
     """"exe" (Windows self-swap), "brew" (macOS Homebrew) or None (release page)."""
-    if not getattr(sys, "frozen", False):
+    if not packaged():
         return None
     if sys.platform == "win32":
         return "exe"
@@ -108,7 +123,7 @@ def install_kind():
 
 def _bundle():
     # Lumea.app/Contents/MacOS/Lumea -> Lumea.app
-    return Path(sys.executable).resolve().parents[2]
+    return app_exe().parents[2]
 
 
 def brew_prefix():
@@ -128,7 +143,7 @@ def installed_version():
     """The version of the bundle on disk, read fresh -- after an upgrade it
     differs from the one this process loaded at launch."""
     try:
-        return (_bundle() / "Contents/Resources/version.txt").read_text().strip()
+        return (_bundle() / "Contents/MacOS/version.txt").read_text().strip()   # Nuitka puts data by the binary
     except OSError:
         return ""
 
@@ -148,11 +163,29 @@ def _relaunch_mac(bundle):
 
 def cleanup_previous(exe=None):
     """Remove the exe a previous update renamed out of the way."""
-    exe = Path(exe or sys.executable)
+    exe = Path(exe or app_exe())
     try:
         exe.with_name(exe.name + ".old").unlink(missing_ok=True)
     except OSError:
         pass  # still locked or not ours to delete; try again next launch
+
+
+def cleanup_old_unpacks():
+    """Delete the unpack folders older versions left behind.
+
+    Nuitka's onefile unpacks each version once into <cache>/ugurcandede/Lumea/<version>
+    (build.yml: --onefile-tempdir-spec) and reuses it on every launch, so an update
+    leaves the previous version's folder. Anything not in that exact layout is left
+    alone; a folder still locked by a closing process goes on a later launch."""
+    if "__compiled__" not in globals():
+        return
+    here = Path(__file__).resolve().parent
+    root = here.parent
+    if root.name != "Lumea" or root.parent.name != "ugurcandede":
+        return
+    for folder in root.iterdir():
+        if folder.is_dir() and folder != here and re.fullmatch(r"\d+(\.\d+)+", folder.name):
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def swap_executable(exe, new):
@@ -184,7 +217,10 @@ def clean_environment():
     _PYI_* variables. The new exe sits at the same path as this one, so it would
     take itself for our child and run from *our* folder -- which is deleted when
     we exit, leaving it without its tray icon, TLS libraries and the rest.
-    PYINSTALLER_RESET_ENVIRONMENT tells it to start from scratch instead.
+    PYINSTALLER_RESET_ENVIRONMENT tells it to start from scratch instead. (Builds
+    are Nuitka now, which ignores these; this still matters while the app doing
+    the update is an older, PyInstaller-built one -- but that runs its own copy of
+    this function, so it only helps from the release that shipped it onwards.)
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("_PYI_")}
     env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -227,7 +263,7 @@ class UpdateChecker(QObject):
             self._install_brew(brew_prefix())
 
     def _install_exe(self):
-        exe = Path(sys.executable)
+        exe = app_exe()
         new = exe.with_name(exe.name + ".new")
         request = QNetworkRequest(QUrl(DOWNLOAD_URL))
         request.setTransferTimeout(_DOWNLOAD_TIMEOUT_MS)

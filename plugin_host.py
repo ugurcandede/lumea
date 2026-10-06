@@ -30,7 +30,7 @@ from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QObject, QStandardPaths, QUrl, Signal
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-import plugin_runtime  # noqa: F401  makes PyInstaller bundle the libraries plugins may use
+import plugin_runtime  # noqa: F401  makes the build bundle the libraries plugins may use
 import updates
 from plugin_api import API_VERSION
 
@@ -79,7 +79,7 @@ class PluginHost(QObject):
         super().__init__(parent)
         self._api = api
         self.enabled = set(enabled)            # ids the user switched on (persisted by the UI)
-        self.dev = not getattr(sys, "frozen", False)
+        self.dev = not updates.packaged()
         root = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
         self._root = _REPO_PLUGINS if self.dev else Path(root) / "plugins"
         self._nam = QNetworkAccessManager(self)

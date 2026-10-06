@@ -28,13 +28,13 @@ one before publishing it. Install / Update / Remove are hidden then.
 ## The rule that's easy to forget
 
 A plugin is plain Python, run by the Python **inside** `Lumea.exe` / `Lumea.app`. That Python has no pip, and
-PyInstaller put into it only the modules Lumea's own code imports — **standard library included**.
+the build (Nuitka) put into it only the modules Lumea's own code imports — **standard library included**.
 
 So a plugin can import only modules that are either
 
 - imported by Lumea's own code (`PySide6.QtCore`, `json`, `asyncio`, `plugin_api`, …), or
 - listed in [`plugin_runtime.py`](../plugin_runtime.py) — a never-called function whose imports exist just so
-  PyInstaller bundles them.
+  the build bundles them.
 
 Anything else fails with `ModuleNotFoundError` on users' machines, even though it works in a source run.
 Adding a module to `plugin_runtime.py` changes the app, so it takes **a Lumea release** before any plugin can
