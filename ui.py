@@ -609,7 +609,7 @@ class LedController(QWidget):
         self._updates.found.connect(self._set_update)
         self._updates.installed.connect(self._quit)  # the relauncher starts the new build
         self._updates.install_failed.connect(self._on_update_failed)
-        self._updates.check_failed.connect(lambda: self._on_check_result(failed=True))
+        self._updates.check_failed.connect(lambda why: self._on_check_result(failed=why))
         self._updates.check()
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updates.CHECK_INTERVAL_MS)
@@ -1181,6 +1181,11 @@ class LedController(QWidget):
         instance = host.running.get(pid)
         widget = instance.settings_widget() if hasattr(instance, "settings_widget") else None
         if widget is not None:     # asked anew on every render (rows are rebuilt)
+            # A plugin's panel gets the page's width and no more: if its own minimum is
+            # wider it's squeezed, rather than widening the page and shifting every row.
+            policy = widget.sizePolicy()
+            policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+            widget.setSizePolicy(policy)
             col.addWidget(widget)
         return box
 
@@ -1223,6 +1228,7 @@ class LedController(QWidget):
     # ---- theme -----------------------------------------------------------
 
     def _on_theme_mode(self, mode):
+        self.api.notify()
         self._theme_mode = mode
         for m, btn in self._seg_btns.items():
             btn.setChecked(m == mode)
@@ -1339,6 +1345,7 @@ class LedController(QWidget):
         return icon.make_icon(self._base_color) if self._tray_color_icon else icon.app_icon()
 
     def _on_toggle_tray_color_icon(self, checked):
+        self.api.notify()
         self._tray_color_icon = checked
         if self._tray is not None:
             self._tray.setIcon(self._tray_icon())
@@ -1371,12 +1378,13 @@ class LedController(QWidget):
             return
         self._update_checking = False
         if failed:
-            self._update_note = "Couldn't reach GitHub. Try again later."
+            self._update_note = failed     # updates.check_failure's words
         elif update is None:
             self._update_note = f"You're on the latest version ({updates.current_version()})."
         self._render_update_row()
 
     def _render_update_row(self):
+        self.api.notify()
         # Settings > About > Updates mirrors the banner (see _render_banner).
         btn, label = self._update_check_btn, self._update_check_label
         if self._update_checking:

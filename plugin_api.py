@@ -19,13 +19,14 @@ from PySide6.QtWidgets import QSlider
 
 import effects
 import music
+import updates
 
 
 # (major, minor). Additions to LumeaAPI bump the minor; anything that could break an
 # existing plugin (a removed or renamed member, a changed meaning) bumps the major
 # and resets the minor. A plugin declares the version it was written against as
 # "api" in plugins/version.json; see plugin_host.compatible().
-API_VERSION = (1, 0)
+API_VERSION = (1, 1)   # 1.1: theme, tray_color_icon, update in state(); their commands
 
 
 class LumeaAPI(QObject):
@@ -77,6 +78,16 @@ class LumeaAPI(QObject):
             "devices": devices,
             "scanning": not c._scan_btn.isEnabled(),
             "link": link.text().lower() if link.isEnabled() else None,   # "connect" | "disconnect" | None
+            # Settings (1.1)
+            "theme": c._theme_mode,                  # "auto" | "light" | "dark"
+            "tray_color_icon": c._tray_color_icon,
+            "update": {                              # mirrors Settings > About > Updates
+                "latest": c._update.version if c._update is not None else None,
+                "state": c._update_state,            # idle | updating | not_in_brew_yet | failed
+                "checking": c._update_checking,
+                "note": c._update_note,              # the row's text when no update is known
+                "can_install": updates.install_kind() is not None,
+            },
         }
 
     # ---- commands ---------------------------------------------------------
@@ -154,3 +165,23 @@ class LumeaAPI(QObject):
 
     def show_status(self, text):
         self._c._set_status(text)
+
+    # ---- settings (1.1) ------------------------------------------------------
+
+    def set_theme(self, mode):
+        if mode in ("auto", "light", "dark"):
+            self._c._on_theme_mode(mode)
+
+    def set_tray_color_icon(self, on):
+        self._c._tray_switch.setChecked(bool(on))     # -> _on_toggle_tray_color_icon
+
+    def check_updates(self):
+        c = self._c
+        if c._update is None and not c._update_checking:
+            c._on_update_row_clicked()
+
+    def install_update(self):
+        """Only where Lumea updates itself; elsewhere the desktop button opens the
+        release page in a browser, which a remote press shouldn't do on the PC."""
+        if self._c._update is not None and updates.install_kind() is not None:
+            self._c._start_update()

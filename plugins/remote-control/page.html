@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- No zoom: a remote, not a document. (iOS ignores user-scalable, hence the gesture guards in the script.) -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Lumea</title>
+<style>
+  /* The desktop app's palettes (theme.py): achromatic, so the only colour on the
+     page is the one the lights show. The page theme follows the phone unless set
+     in Settings (data-theme on <html>). */
+  :root {
+    --panel: #FFFFFF; --inset: #F3F4F7; --line: #E5E7EB;
+    --ink: #16181D; --muted: #6B7280; --faint: #A0A6B1;
+    --primary-bg: #16181D; --primary-fg: #FFFFFF; --ok: #1E8E5A; --danger: #C2410C;
+    --swatch-border: rgba(0,0,0,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --panel: #1A1C21; --inset: #24272D; --line: #2E3138;
+      --ink: #EEF0F3; --muted: #9AA1AC; --faint: #6B7280;
+      --primary-bg: #EEF0F3; --primary-fg: #16181D; --ok: #4ED39A; --danger: #FB923C;
+      --swatch-border: rgba(255,255,255,0.14);
+    }
+  }
+  :root[data-theme="dark"] {
+    --panel: #1A1C21; --inset: #24272D; --line: #2E3138;
+    --ink: #EEF0F3; --muted: #9AA1AC; --faint: #6B7280;
+    --primary-bg: #EEF0F3; --primary-fg: #16181D; --ok: #4ED39A; --danger: #FB923C;
+    --swatch-border: rgba(255,255,255,0.14);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* The page itself never scrolls or bounces; only a tab that outgrows the screen
+     (a long device list) scrolls inside <main>. */
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    background: var(--panel); color: var(--ink); touch-action: manipulation;
+    font: 15px/1.4 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; -webkit-user-select: none; user-select: none;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  a { color: inherit; }
+  [hidden] { display: none !important; }
+  /* On a tablet or desktop browser keep the phone layout, centred. */
+  header, main, nav, #banner { width: 100%; max-width: 520px; margin-left: auto; margin-right: auto; }
+
+  /* ---- top bar ---- */
+  header {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    padding: calc(10px + env(safe-area-inset-top)) 16px 10px; border-bottom: 1px solid var(--line);
+  }
+  #pc { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pc small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  #pc.switchable { cursor: pointer; }
+  #pc .caret { display: none; color: var(--muted); font-weight: 400; margin-left: 4px; }
+  #pc.switchable .caret { display: inline; }
+  #sheet { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+  #sheet .panel {
+    width: 100%; max-width: 520px; background: var(--panel); border-radius: 16px 16px 0 0;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  #sheet a {
+    display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 10px;
+    text-decoration: none; font-weight: 500; background: var(--inset);
+  }
+  #sheet a + a { margin-top: 8px; }
+  #sheet a small { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12px; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--swatch-border); flex: none; }
+  .power {
+    display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 12px; border-radius: 17px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--faint); font-weight: 600; font-size: 14px;
+  }
+  .power.on { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+  .power svg { width: 16px; height: 16px; }
+
+  main { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 16px; }
+  section.tab { display: flex; flex-direction: column; gap: 14px; }
+  h2 { margin: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .note { color: var(--muted); font-size: 13px; }
+  .card { background: var(--inset); border-radius: 12px; padding: 4px 12px; }
+  .card.note { padding: 12px; }
+
+  /* ---- chips ---- */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--line);
+    background: var(--panel); font-size: 13px; font-weight: 500;
+  }
+  .chip.on { background: var(--primary-bg); color: var(--primary-fg); border-color: var(--primary-bg); }
+  .chip:disabled { opacity: .45; }
+
+  /* ---- colour: sized to fit the screen without scrolling ---- */
+  #wheel-wrap { display: flex; justify-content: center; position: relative; }
+  /* The wheel takes what's left of the screen: ~475 px go to the bars, chips, presets
+     and sliders (measured with an effect's slider showing). */
+  :root { --wheel: max(150px, min(64vw, calc(100vh - 475px), 280px)); }
+  @supports (height: 100dvh) { :root { --wheel: max(150px, min(64vw, calc(100dvh - 475px), 280px)); } }
+  #wheel { width: var(--wheel); height: var(--wheel); touch-action: none; border-radius: 50%; }
+  #wheel.muted { opacity: .35; }
+  #wheel-note {
+    position: absolute; inset: 0; margin: auto; width: var(--wheel); height: fit-content;
+    text-align: center; font-size: 13px; font-weight: 500; color: var(--ink); padding: 0 24px; pointer-events: none;
+  }
+  .presets { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; }
+  .preset { aspect-ratio: 1; width: 100%; max-width: 30px; justify-self: center; border-radius: 50%; border: 1px solid var(--swatch-border); padding: 0; }
+  .slider { display: flex; align-items: center; gap: 10px; }
+  .slider label { width: 78px; font-size: 13px; color: var(--muted); }
+  .slider output { width: 40px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+  input[type=range] { flex: 1; accent-color: var(--ink); height: 26px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row h2 { margin: 0; width: 52px; flex: none; }
+
+  /* ---- devices / settings ---- */
+  .actions { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel);
+    font-weight: 600; font-size: 14px; text-decoration: none; display: flex; align-items: center; justify-content: center;
+  }
+  .btn.small { flex: none; height: 32px; padding: 0 12px; font-size: 13px; }
+  .btn.primary { background: var(--primary-bg); border-color: var(--primary-bg); color: var(--primary-fg); }
+  .btn:disabled { opacity: .45; }
+  .device { display: flex; align-items: center; gap: 12px; background: var(--inset); border-radius: 12px; padding: 10px 12px; }
+  .device + .device { margin-top: 8px; }
+  .device input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ink); flex: none; }
+  .device .name { flex: 1; min-width: 0; }
+  .device .name b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .device .name small { color: var(--muted); font-size: 12px; }
+  .device .name small.ok { color: var(--ok); }
+  .device.stale .name b { color: var(--faint); }
+  .icon-btn { width: 34px; height: 34px; border: none; background: none; border-radius: 8px; color: var(--muted); padding: 6px; flex: none; }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .mini { display: flex; gap: 6px; margin-top: 8px; }
+  .pref { display: flex; align-items: center; gap: 12px; padding: 9px 0; }
+  .pref + .pref { border-top: 1px solid var(--line); }
+  .pref .text { flex: 1; min-width: 0; }
+  .pref .text b { display: block; font-weight: 500; }
+  .pref .text small { color: var(--muted); font-size: 12px; display: block; overflow-wrap: anywhere; }
+  .segment { display: flex; background: var(--panel); border-radius: 9px; padding: 2px; gap: 2px; flex: none; }
+  .segment button { border: none; background: none; height: 28px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--muted); }
+  .segment button.on { background: var(--primary-bg); color: var(--primary-fg); font-weight: 600; }
+  .switch { position: relative; width: 44px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; }
+  .switch span { position: absolute; inset: 0; background: var(--line); border-radius: 13px; pointer-events: none; transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--panel); transition: left .15s; }
+  .switch input:checked + span { background: var(--primary-bg); }
+  .switch input:checked + span::after { left: 21px; background: var(--primary-fg); }
+  footer.credits { text-align: center; font-size: 12px; color: var(--faint); line-height: 1.7; padding-top: 4px; }
+  footer.credits a { color: var(--muted); text-decoration: none; }
+
+  /* ---- tab bar ---- */
+  nav {
+    display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); flex: none;
+    padding-bottom: env(safe-area-inset-bottom); background: var(--panel);
+  }
+  nav button {
+    border: none; background: none; height: 56px; color: var(--faint); font-size: 12px; font-weight: 500;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  }
+  nav button svg { width: 22px; height: 22px; }
+  nav button.on { color: var(--ink); }
+
+  /* ---- pairing / connection ---- */
+  #pair { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 16px; padding: 24px; text-align: center; }
+  #pair h1 { margin: 0; font-size: 22px; }
+  #pin {
+    width: 210px; height: 56px; text-align: center; font-size: 28px; letter-spacing: 8px; font-variant-numeric: tabular-nums;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--inset); color: var(--ink); user-select: text;
+  }
+  #pair .btn { flex: none; width: 210px; }
+  #pair-msg { color: var(--danger); min-height: 20px; font-size: 14px; }
+  #banner { background: var(--inset); color: var(--muted); text-align: center; font-size: 13px; padding: 6px; flex: none; }
+  #toast {
+    position: fixed; left: 16px; right: 16px; bottom: calc(70px + env(safe-area-inset-bottom));
+    max-width: 488px; margin: 0 auto;
+    background: var(--primary-bg); color: var(--primary-fg); border-radius: 10px; padding: 10px 14px; font-size: 14px;
+    opacity: 0; transition: opacity .2s; pointer-events: none;
+  }
+  #toast.show { opacity: .95; }
+</style>
+</head>
+<body>
+
+<!-- Pairing: shown until this browser has a token for this PC. -->
+<div id="pair" hidden>
+  <h1>Lumea</h1>
+  <div class="note">Enter the PIN shown in Lumea under<br>Settings › Manage plugins › Remote control.</div>
+  <input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••">
+  <button id="pair-go" class="btn primary">Pair</button>
+  <div id="pair-msg"></div>
+</div>
+
+<div id="app" hidden style="display:contents">
+  <header>
+    <div id="pc"><span id="pc-name">Lumea</span><span class="caret">▾</span><small id="summary"></small></div>
+    <div id="preview" class="swatch"></div>
+    <button id="power" class="power">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7.5 6.5a7 7 0 1 0 9 0"/><path d="M12 3v8"/></svg>
+      <span>Off</span>
+    </button>
+  </header>
+  <div id="banner" hidden></div>
+
+  <main>
+    <!-- Colour: what the lights show, effects and music included -->
+    <section class="tab" id="tab-color">
+      <div class="chips" id="targets"></div>
+      <div id="editor" style="display:flex;flex-direction:column;gap:12px">
+        <div id="wheel-wrap"><canvas id="wheel"></canvas><div id="wheel-note" hidden></div></div>
+        <div class="presets" id="presets"></div>
+        <div class="slider"><label for="brightness">Brightness</label><input type="range" id="brightness" min="0" max="100"><output id="brightness-v"></output></div>
+      </div>
+      <div id="no-editor" class="card note" hidden>Nothing to control yet. Connect a strip under Devices.</div>
+      <div>
+        <div class="row"><h2>Effect</h2><div class="chips" id="effects"></div></div>
+        <div class="slider" id="speed-row" style="margin-top:8px"><label for="speed">Speed</label><input type="range" id="speed" min="1" max="100"><output id="speed-v"></output></div>
+      </div>
+      <div id="music-box">
+        <div class="row"><h2>Music</h2><div class="chips" id="music"></div></div>
+        <div class="slider" id="sens-row" style="margin-top:8px"><label for="sens">Sensitivity</label><input type="range" id="sens" min="1" max="100"><output id="sens-v"></output></div>
+      </div>
+    </section>
+
+    <!-- Devices -->
+    <section class="tab" id="tab-devices" hidden>
+      <div class="actions">
+        <button id="scan" class="btn">Scan</button>
+        <button id="link" class="btn primary">Connect</button>
+      </div>
+      <div class="note" id="status"></div>
+      <div id="devices"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="tab" id="tab-settings" hidden>
+      <div>
+        <h2>This PC</h2>
+        <div class="card">
+          <div class="pref"><div class="text"><b id="set-pc"></b><small id="set-addr"></small></div></div>
+          <div class="pref"><div class="text"><b>Paired phones connected</b><small>Pair more with the PIN or QR in Lumea</small></div><span id="set-phones"></span></div>
+          <div class="pref"><div class="text"><b>Unpair this phone</b><small>It will need the PIN again</small></div><button id="unpair" class="btn small">Unpair</button></div>
+        </div>
+      </div>
+      <div>
+        <h2>Lumea app</h2>
+        <div class="card">
+          <div class="pref"><div class="text"><b>Theme</b><small>Auto follows the system setting</small></div><div class="segment" id="app-theme"></div></div>
+          <div class="pref"><div class="text"><b>Tray icon shows the strip color</b><small>Otherwise the tray shows the Lumea icon</small></div>
+            <label class="switch"><input type="checkbox" id="tray-color"><span></span></label></div>
+        </div>
+      </div>
+      <div>
+        <h2>This page</h2>
+        <div class="card">
+          <div class="pref"><div class="text"><b>Theme</b><small>Only on this phone</small></div><div class="segment" id="page-theme"></div></div>
+        </div>
+      </div>
+      <div>
+        <h2>About</h2>
+        <div class="card">
+          <div class="pref"><div class="text"><b>Lumea</b><small>Desktop control for ELK-BLEDOM and MELK LED strips</small></div></div>
+          <div class="pref"><div class="text"><b>Updates</b><small id="upd-text"></small></div><button id="upd-btn" class="btn small"></button></div>
+          <div class="pref"><div class="text"><b>Open source</b><small>MIT license. Built with PySide6, bleak and qasync.</small></div>
+            <a class="btn small" href="https://github.com/ugurcandede/Lumea" target="_blank" rel="noopener">View on GitHub</a></div>
+        </div>
+      </div>
+      <footer class="credits">
+        built with ❤️ for 💡 rooms full of colour<br>
+        <a href="https://github.com/ugurcandede" target="_blank" rel="noopener">ugurcandede</a> · <a href="https://ugurcandede.github.io/" target="_blank" rel="noopener">ugurcandede.github.io</a><br>
+        Lumea · <a id="version-link" target="_blank" rel="noopener"></a>
+      </footer>
+    </section>
+  </main>
+
+  <nav>
+    <button data-tab="color" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>Color</button>
+    <button data-tab="devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="5" rx="2"/><rect x="3" y="14" width="18" height="5" rx="2"/></svg>Devices</button>
+    <button data-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Settings</button>
+  </nav>
+</div>
+
+<div id="toast"></div>
+
+<!-- Other Lumea PCs on the network (discovery.py); each pairs on its own -->
+<div id="sheet" hidden>
+  <div class="panel">
+    <h2>Lumea on this network</h2>
+    <div id="pcs"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const TOKEN_KEY = "lumea-token", THEME_KEY = "lumea-page-theme";
+const GITHUB = "https://github.com/ugurcandede/Lumea";
+// Modes that ignore the picked colour (the others -- Breathe, Pulse -- animate it).
+const IGNORES_COLOR = ["rainbow", "cycle", "spectrum", "beat", "flow"];
+let ws, state = null, info = null, pcName = "", paired = false, retry = 0, retryTimer = null;
+
+// No pinch / double-tap zoom, even where the viewport meta is ignored (iOS).
+for (const ev of ["gesturestart", "gesturechange"]) document.addEventListener(ev, (e) => e.preventDefault());
+document.addEventListener("touchmove", (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+document.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+
+// ---------- storage ----------
+
+function load(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function save(key, v) { try { v ? localStorage.setItem(key, v) : localStorage.removeItem(key); } catch {} }
+
+function applyPageTheme() {
+  const t = load(THEME_KEY) || "auto";
+  if (t === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  segment($("page-theme"), t, (m) => { save(THEME_KEY, m === "auto" ? null : m); applyPageTheme(); });
+}
+
+// ---------- connection ----------
+
+function connect(first) {
+  clearTimeout(retryTimer);
+  ws = new WebSocket(`ws://${location.host}`);            // same port as this page
+  ws.onopen = () => { retry = 0; ws.send(JSON.stringify(first)); };
+  ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+  ws.onclose = () => {
+    if (!paired) return;                                   // the pairing screen handles itself
+    banner("Connection lost. Reconnecting…");
+    retryTimer = setTimeout(() => connect({ type: "hello", token: load(TOKEN_KEY) }), Math.min(1000 * 2 ** retry++, 10000));
+  };
+}
+
+function onMessage(m) {
+  if (m.type === "welcome") {
+    if (m.token) save(TOKEN_KEY, m.token);
+    paired = true; pcName = m.name;
+    $("pc-name").textContent = m.name;
+    show("app"); banner(null);
+  } else if (m.type === "denied") {
+    paired = false; save(TOKEN_KEY, null);
+    show("pair"); $("pair-msg").textContent = m.reason; $("pin").value = ""; $("pin").focus();
+  } else if (m.type === "state") {
+    state = m.state; render();
+  } else if (m.type === "info") {
+    info = m; renderPeers(); if (state) renderSettings();
+  } else if (m.type === "frame") {
+    $("preview").style.background = m.color;
+  } else if (m.type === "error") {
+    toast(m.message);
+  }
+}
+
+function cmd(name, ...args) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "cmd", name, args }));
+}
+
+// Dragging fires far more often than the lights can follow: send the newest value
+// at most every `ms`, and always the last one.
+function throttled(ms, fn) {
+  let last = 0, timer = null, pending = null;
+  return (...args) => {
+    pending = args;
+    const wait = last + ms - Date.now();
+    if (wait <= 0) { last = Date.now(); fn(...pending); pending = null; }
+    else if (!timer) timer = setTimeout(() => { timer = null; last = Date.now(); if (pending) fn(...pending); pending = null; }, wait);
+  };
+}
+
+function show(which) { $("pair").hidden = which !== "pair"; $("app").hidden = which !== "app"; }
+function banner(text) { $("banner").hidden = !text; $("banner").textContent = text || ""; }
+let toastTimer;
+function toast(text) {
+  $("toast").textContent = text; $("toast").classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 2500);
+}
+
+// ---------- rendering ----------
+
+const busy = new Set();          // controls being dragged: incoming state must not move them
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function chip(label, on, onClick, disabled) {
+  const b = document.createElement("button");
+  b.className = "chip" + (on ? " on" : ""); b.textContent = label; b.disabled = !!disabled;
+  b.onclick = onClick; return b;
+}
+
+function segment(box, current, onPick) {
+  box.replaceChildren(...["auto", "light", "dark"].map((m) => {
+    const b = document.createElement("button"); b.textContent = cap(m); b.className = m === current ? "on" : "";
+    b.onclick = () => onPick(m); return b;
+  }));
+}
+
+function render() {
+  const s = state;
+  $("summary").textContent = s.summary;
+  const p = $("power"); p.classList.toggle("on", s.power); p.querySelector("span").textContent = s.power ? "On" : "Off";
+  if (!s.effect && !s.music) $("preview").style.background = scaled(s.color, s.brightness);
+  $("preview").style.opacity = s.power ? 1 : 0.3;          // off: the colour is kept, not shown
+
+  // colour: targets, wheel, presets, brightness, effects, music
+  const live = s.devices.filter((d) => d.kind === "ble" && d.connected);
+  const targets = $("targets"); targets.replaceChildren(chip("All", s.target === "all", () => cmd("set_target", s.target === "all" ? null : "all")));
+  for (const d of live) targets.append(chip(d.name, s.target === d.id, () => cmd("set_target", s.target === d.id ? null : d.id)));
+  const wasHidden = $("editor").hidden;
+  $("editor").hidden = !s.editable; $("no-editor").hidden = s.editable;
+  if (!busy.has("wheel")) wheel.setColor(s.color);
+  else if (wasHidden) wheel.redraw();
+  const running = s.effect || s.music;                     // shown, not changed: the desktop app behaves the same
+  const ignores = running && IGNORES_COLOR.includes(running);
+  $("wheel").classList.toggle("muted", !!ignores);
+  $("wheel-note").hidden = !ignores;
+  $("wheel-note").textContent = ignores ? `${cap(running)} doesn't use the picked colour. Turn it off to see it.` : "";
+  presets(s.presets);
+  slider("brightness", s.brightness);
+  const fx = $("effects"); fx.replaceChildren(chip("Off", !s.effect, () => cmd("set_effect", null)));
+  for (const e of s.effects) fx.append(chip(cap(e), s.effect === e, () => cmd("set_effect", e)));
+  $("speed-row").hidden = !s.effect; slider("speed", s.effect_speed);
+  $("music-box").hidden = s.music_modes.length === 0;
+  const mu = $("music"); mu.replaceChildren(chip("Off", !s.music, () => cmd("set_music", null)));
+  for (const m of s.music_modes) mu.append(chip(cap(m), s.music === m, () => cmd("set_music", m)));
+  $("sens-row").hidden = !s.music; slider("sens", s.sensitivity);
+
+  // devices
+  $("scan").disabled = s.scanning; $("scan").textContent = s.scanning ? "Scanning…" : "Scan";
+  $("link").disabled = !s.link; $("link").textContent = s.link === "disconnect" ? "Disconnect" : "Connect";
+  $("status").textContent = s.status;
+  devices(s);
+
+  renderSettings();
+}
+
+function renderSettings() {
+  const s = state;
+  $("set-pc").textContent = pcName;
+  $("set-addr").textContent = location.host;
+  $("set-phones").textContent = info ? info.phones : "–";
+  segment($("app-theme"), s.theme, (m) => cmd("set_theme", m));
+  $("tray-color").checked = !!s.tray_color_icon;
+  updateRow(s.update, s.version);
+  const dev = s.version.startsWith("dev");
+  $("version-link").textContent = dev ? s.version : "v" + s.version;
+  $("version-link").href = dev ? `${GITHUB}/commits/master` : `${GITHUB}/releases/tag/v${s.version}`;
+}
+
+// Settings > About > Updates, as the desktop row shows it (ui.py _render_update_row).
+function updateRow(u, version) {
+  const text = $("upd-text"), btn = $("upd-btn");
+  let label = "Check now", enabled = true, action = () => cmd("check_updates"), msg = u.note;
+  if (u.checking) { msg = "Checking…"; enabled = false; }
+  else if (u.latest) {
+    const v = u.latest;
+    if (u.state === "updating") { msg = `Updating to v${v}… Lumea restarts when it's done.`; label = "Updating…"; enabled = false; }
+    else if (u.state === "failed") { msg = `Updating to v${v} failed.`; label = "Retry"; action = () => cmd("install_update"); }
+    else if (u.state === "not_in_brew_yet") { msg = `v${v} isn't in Homebrew yet. Try again in a few minutes.`; label = "Retry"; action = () => cmd("install_update"); }
+    else if (u.can_install) { msg = `v${v} is available.`; label = "Update now"; action = () => cmd("install_update"); }
+    else { msg = `v${v} is available on the release page.`; label = "Open"; action = () => window.open(`${GITHUB}/releases/tag/v${v}`, "_blank"); }
+  }
+  text.textContent = msg; btn.textContent = label; btn.disabled = !enabled; btn.onclick = action;
+}
+
+function renderPeers() {
+  const peers = (info && info.peers) || [];
+  $("pc").classList.toggle("switchable", peers.length > 0);
+  const here = document.createElement("a"); here.href = "#"; here.onclick = (e) => { e.preventDefault(); $("sheet").hidden = true; };
+  here.textContent = pcName; here.append(Object.assign(document.createElement("small"), { textContent: "this one" }));
+  $("pcs").replaceChildren(here, ...peers.map((p) => {
+    const a = document.createElement("a"); a.href = p.url; a.textContent = p.name;
+    a.append(Object.assign(document.createElement("small"), { textContent: new URL(p.url).host }));
+    return a;
+  }));
+}
+
+function slider(id, value) {
+  if (busy.has(id)) return;
+  $(id).value = value; $(id + "-v").textContent = value + "%";
+}
+
+function presets(list) {
+  const box = $("presets");
+  if (box.children.length !== list.length) {
+    box.replaceChildren(...list.map((_, i) => {
+      const b = document.createElement("button"); b.className = "preset";
+      let hold;                                             // hold = save, tap = apply
+      b.onpointerdown = () => { hold = setTimeout(() => { hold = null; cmd("save_preset", i); toast("Saved to slot " + (i + 1)); navigator.vibrate?.(20); }, 600); };
+      b.onpointerup = () => { if (hold) { clearTimeout(hold); hold = null; cmd("apply_preset", i); } };
+      b.onpointerleave = b.onpointercancel = () => { clearTimeout(hold); hold = null; };
+      b.oncontextmenu = (e) => e.preventDefault();
+      return b;
+    }));
+  }
+  list.forEach((c, i) => (box.children[i].style.background = c));
+}
+
+function devices(s) {
+  const box = $("devices"); box.replaceChildren();
+  if (!s.devices.length) { box.innerHTML = '<div class="card note">No strips yet. Tap Scan to find nearby strips.</div>'; return; }
+  for (const d of s.devices) {
+    const row = document.createElement("div"); row.className = "device" + (d.in_range ? "" : " stale");
+    const check = document.createElement("input"); check.type = "checkbox";
+    check.checked = d.checked; check.disabled = !d.selectable;
+    check.onchange = () => cmd("set_checked", d.id, check.checked);
+    const name = document.createElement("div"); name.className = "name";
+    const status = d.kind === "usb" ? "USB" : d.connected ? "Connected" : d.in_range ? "Offline" : "Not in range";
+    name.innerHTML = `<b></b><small class="${d.connected && d.kind === "ble" ? "ok" : ""}"></small>`;
+    name.querySelector("b").textContent = d.name; name.querySelector("small").textContent = status;
+    row.append(check, name);
+    if (d.kind === "ble") row.append(iconBtn(penIcon, () => rename(d)), iconBtn(trashIcon, () => forget(d)));
+    if (d.id === "msi-mystic-light" && s.msi_effect) {
+      const mini = document.createElement("div"); mini.className = "mini";
+      for (const m of ["static", "rainbow"]) mini.append(chip(cap(m), s.msi_effect === m, () => cmd("set_msi_effect", m), !!(s.effect || s.music)));
+      name.append(mini);
+    }
+    box.append(row);
+  }
+}
+
+const penIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
+const trashIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13"/></svg>';
+function iconBtn(svg, onClick) {
+  const b = document.createElement("button"); b.className = "icon-btn"; b.innerHTML = svg; b.onclick = onClick; return b;
+}
+
+function rename(d) {
+  const name = prompt(`New name for "${d.name}" (empty = its own name):`, d.name);
+  if (name !== null && name.trim() !== d.name) cmd("rename", d.id, name.trim());
+}
+
+function forget(d) {
+  if (confirm(`Forget "${d.name}"? It comes back on the next scan that finds it.`)) cmd("forget", d.id);
+}
+
+// ---------- colour maths ----------
+
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function rgbToHex(r, g, b) { return "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join(""); }
+function scaled(hex, pct) { return rgbToHex(...hexToRgb(hex).map((c) => c * pct / 100)); }
+function hsvToRgb(h, s, v) {                              // h 0..360, s/v 0..1
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [f(5) * 255, f(3) * 255, f(1) * 255];
+}
+function rgbToHs(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+  let h = 0;
+  if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, max ? d / max : 0];
+}
+
+// ---------- colour wheel: hue round the rim, saturation from the centre out ----------
+
+const wheel = (() => {
+  const canvas = $("wheel"), ctx = canvas.getContext("2d");
+  let size = 0, image = null, hue = 0, sat = 0;          // full value: darkness is the Brightness slider's job
+
+  function paint() {
+    const css = canvas.clientWidth, dpr = window.devicePixelRatio || 1, px = Math.round(css * dpr);
+    if (!px) return;                                         // hidden (another tab, or nothing to edit)
+    if (px !== size) {                                       // (re)build the wheel image only on resize
+      size = canvas.width = canvas.height = px;
+      image = ctx.createImageData(px, px);
+      const r = px / 2;
+      for (let y = 0; y < px; y++) for (let x = 0; x < px; x++) {
+        const dx = x - r, dy = y - r, d = Math.hypot(dx, dy), i = (y * px + x) * 4;
+        if (d > r) continue;
+        const [R, G, B] = hsvToRgb((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360, d / r, 1);
+        image.data.set([R, G, B, d > r - 1 ? (r - d) * 255 : 255], i);
+      }
+    }
+    ctx.putImageData(image, 0, 0);
+    const r = size / 2, a = hue * Math.PI / 180, x = r + Math.cos(a) * sat * r, y = r + Math.sin(a) * sat * r;
+    ctx.lineWidth = 3 * (size / canvas.clientWidth);
+    ctx.beginPath(); ctx.arc(x, y, size * 0.045, 0, 2 * Math.PI);
+    ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, size * 0.045 + ctx.lineWidth, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(0,0,0,.35)"; ctx.lineWidth /= 2; ctx.stroke();
+  }
+
+  const send = throttled(80, (hex) => cmd("set_color", hex));
+  function pick(e) {
+    const box = canvas.getBoundingClientRect(), r = box.width / 2;
+    const dx = e.clientX - box.left - r, dy = e.clientY - box.top - r;
+    hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360; sat = Math.min(1, Math.hypot(dx, dy) / r);
+    paint(); send(rgbToHex(...hsvToRgb(hue, sat, 1)));
+  }
+  canvas.addEventListener("pointerdown", (e) => { busy.add("wheel"); canvas.setPointerCapture(e.pointerId); pick(e); });
+  canvas.addEventListener("pointermove", (e) => { if (busy.has("wheel")) pick(e); });
+  const end = () => setTimeout(() => busy.delete("wheel"), 300);  // let the app's echo settle first
+  canvas.addEventListener("pointerup", end); canvas.addEventListener("pointercancel", end);
+  window.addEventListener("resize", () => { size = 0; paint(); });
+
+  return {
+    redraw: paint,
+    setColor(hex) { [hue, sat] = rgbToHs(...hexToRgb(hex)); paint(); },
+  };
+})();
+
+// ---------- controls ----------
+
+function bindSlider(id, name) {
+  const el = $(id), send = throttled(80, (v) => cmd(name, v));
+  el.addEventListener("input", () => { busy.add(id); $(id + "-v").textContent = el.value + "%"; send(Number(el.value)); });
+  el.addEventListener("change", () => setTimeout(() => busy.delete(id), 300));
+}
+bindSlider("brightness", "set_brightness");
+bindSlider("speed", "set_effect_speed");
+bindSlider("sens", "set_sensitivity");
+
+$("power").onclick = () => state && cmd("set_power", !state.power);
+$("pc").onclick = () => { if ($("pc").classList.contains("switchable")) $("sheet").hidden = false; };
+$("sheet").onclick = (e) => { if (e.target === $("sheet")) $("sheet").hidden = true; };
+$("scan").onclick = () => cmd("scan");
+$("link").onclick = () => cmd("link");
+$("tray-color").onchange = (e) => cmd("set_tray_color_icon", e.target.checked);
+$("unpair").onclick = () => {
+  if (!confirm("Unpair this phone? You'll need the PIN again.")) return;
+  save(TOKEN_KEY, null); paired = false; ws && ws.close(); show("pair"); $("pair-msg").textContent = "";
+};
+
+document.querySelectorAll("nav button").forEach((b) => (b.onclick = () => {
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  for (const t of ["color", "devices", "settings"]) $("tab-" + t).hidden = t !== b.dataset.tab;
+  if (b.dataset.tab === "color") wheel.redraw();
+  document.querySelector("main").scrollTop = 0;
+}));
+
+function pairWith(pin) { $("pair-msg").textContent = ""; connect({ type: "pair", pin }); }
+$("pair-go").onclick = () => pairWith($("pin").value);
+$("pin").addEventListener("input", () => { if ($("pin").value.replace(/\D/g, "").length === 6) pairWith($("pin").value); });
+
+// ---------- start ----------
+
+applyPageTheme();
+// The QR carries ?pin=…: pair with it, then drop it from the address bar.
+const urlPin = new URLSearchParams(location.search).get("pin");
+if (urlPin) history.replaceState(null, "", location.pathname);
+// A scanned QR wins over a stored token: after "Reset pairings" the old token is void,
+// and the new QR is how the phone gets back in.
+const token = load(TOKEN_KEY);
+if (urlPin) { show("pair"); pairWith(urlPin); }
+else if (token) { paired = true; show("app"); banner("Connecting…"); connect({ type: "hello", token }); }
+else { show("pair"); $("pin").focus(); }
+</script>
+</body>
+</html>
