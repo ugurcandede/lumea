@@ -17,5 +17,4 @@ bundles the modules without loading them at startup.
 
 def _bundle():
     import segno                    # noqa: F401  QR codes (remote: pairing)
-    import PySide6.QtHttpServer     # noqa: F401  (remote: the phone page)
-    import PySide6.QtWebSockets     # noqa: F401  (remote: live state)
+    import PySide6.QtWebSockets     # noqa: F401  (remote: the page's live link)

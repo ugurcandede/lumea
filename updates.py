@@ -31,6 +31,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QObject, QProcess, QProcessEnvironment, QSettings, QUrl, Signal
@@ -81,6 +82,18 @@ def parse_release(data, current, dismissed=None):
     if not is_newer(latest, current) or latest == dismissed:
         return None
     return Update(latest, url)
+
+
+def check_failure(status, remaining, reset):
+    """Why a release check failed, in words for the Settings row.
+
+    GitHub allows 60 unauthenticated API calls an hour per IP -- shared by every
+    Lumea (and anything else) behind that IP -- and answers 403 or 429 with the
+    reset time once they're used up."""
+    if status in (403, 429) and remaining == "0" and reset.isdigit():
+        when = datetime.fromtimestamp(int(reset)).strftime("%H:%M")
+        return f"GitHub's hourly limit for this network is used up. Try again after {when}."
+    return "Couldn't reach GitHub. Try again later."
 
 
 def current_version():
@@ -243,7 +256,7 @@ def clean_environment():
 
 class UpdateChecker(QObject):
     found = Signal(object)        # Update, or None when up to date
-    check_failed = Signal()       # GitHub unreachable (the banner keeps what it showed)
+    check_failed = Signal(str)    # why, for the Settings row (the banner keeps what it showed)
     installed = Signal()          # the new build is in place and relaunching; quit now
     install_failed = Signal(str)  # "not_in_brew_yet" | "brew_error" | "download" | "exe_swap"
 
@@ -262,7 +275,10 @@ class UpdateChecker(QObject):
             reply.deleteLater()
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 log.debug("update check failed: %s", reply.errorString())
-                self.check_failed.emit()
+                self.check_failed.emit(check_failure(
+                    reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute),
+                    bytes(reply.rawHeader("X-RateLimit-Remaining")).decode(),
+                    bytes(reply.rawHeader("X-RateLimit-Reset")).decode()))
                 return  # keep whatever was shown; the daily check tries again
             dismissed = None if manual else dismissed_version()
             self.found.emit(parse_release(bytes(reply.readAll()), current_version(), dismissed))
