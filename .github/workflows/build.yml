@@ -12,6 +12,13 @@ on:
 permissions:
   contents: read
 
+# One run at a time, end to end: a run that computes its version while another is
+# still releasing would bump from the same tag and collide (v2.4.1 shipped after
+# v2.5.0 that way). Queued runs wait; GitHub keeps only the newest pending one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash
@@ -29,9 +36,12 @@ jobs:
           fetch-depth: 0
       - id: version
         run: |
-          # Bump the latest tag by the last commit message:
+          # Bump the highest release tag by the last commit message:
           #   BREAKING:/bump: -> major, feat: -> minor, anything else -> patch.
-          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Highest, not nearest (git describe): an out-of-order tag on HEAD's history
+          # must not send the next version backwards into one that already exists.
+          LATEST=$(git tag --list 'v[0-9]*' --sort=-v:refname | head -n 1)
+          LATEST=${LATEST:-v0.0.0}
           MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
           MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
           PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
@@ -138,9 +148,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    concurrency:
-      group: release
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:

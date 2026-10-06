@@ -576,6 +576,8 @@ class LedController(QWidget):
         self._ble_blocker = _bluetooth_blocker()  # None, or why a scan must not run
         self._update = None                    # newer release, if the check found one
         self._update_state = "idle"            # idle | updating | not_in_brew_yet | failed
+        self._update_checking = False          # the Settings "Check now" is waiting for GitHub
+        self._update_note = "Checks GitHub for a newer version"   # Settings row text when no update is known
 
         self._load_state()
         self._base_color = self._load_color()
@@ -975,7 +977,7 @@ class LedController(QWidget):
         open_url = lambda url: (lambda: QDesktopServices.openUrl(QUrl(url)))
         self._update_check_label = _label("Checks GitHub for a newer version", "rowSub")
         self._update_check_label.setWordWrap(True)
-        self._update_check_btn = _button("Check now", "ghost", self._check_updates_now)
+        self._update_check_btn = _button("Check now", "ghost", self._on_update_row_clicked)
         about = self._section("About", [
             self._pref_row("Lumea", "Desktop control for ELK-BLEDOM and MELK LED strips"),
             self._pref_row("Updates", self._update_check_label, self._update_check_btn),
@@ -1351,23 +1353,47 @@ class LedController(QWidget):
 
     # ---- update banner ---------------------------------------------------
 
-    def _check_updates_now(self):
-        self._update_check_btn.setEnabled(False)
-        self._update_check_label.setText("Checking…")
-        self._updates.check(manual=True)
+    def _on_update_row_clicked(self):
+        # One button: "Check now" until an update is known, then it installs it
+        # (the same path as the banner's button).
+        if self._update is None:
+            self._update_checking = True
+            self._render_update_row()
+            self._updates.check(manual=True)
+        else:
+            self._start_update()
 
     def _on_check_result(self, update=None, failed=False):
-        # Only answers the Settings button; the daily check stays silent.
-        if self._update_check_btn.isEnabled():
+        # Only the Settings button's own check updates its note; the daily check stays silent.
+        if not self._update_checking:
             return
-        self._update_check_btn.setEnabled(True)
+        self._update_checking = False
         if failed:
-            text = "Couldn't reach GitHub. Try again later."
-        elif update is not None:
-            text = f"v{update.version} is available. Use the banner on the main page to install it."
+            self._update_note = "Couldn't reach GitHub. Try again later."
+        elif update is None:
+            self._update_note = f"You're on the latest version ({updates.current_version()})."
+        self._render_update_row()
+
+    def _render_update_row(self):
+        # Settings > About > Updates mirrors the banner (see _render_banner).
+        btn, label = self._update_check_btn, self._update_check_label
+        if self._update_checking:
+            text, button, enabled = "Checking…", "Check now", False
+        elif self._update is None:
+            text, button, enabled = self._update_note, "Check now", True
         else:
-            text = f"You're on the latest version ({updates.current_version()})."
-        self._update_check_label.setText(text)
+            v = self._update.version
+            text, button, enabled = {
+                "idle": (f"v{v} is available.", "Update now", True),
+                "updating": (f"Updating to v{v}…", "Updating…", False),
+                "not_in_brew_yet": (f"v{v} isn't in Homebrew yet. Try again in a few minutes.", "Retry", True),
+                "failed": (f"Updating to v{v} failed.", "Retry", True),
+            }[self._update_state]
+            if self._update_state == "idle" and updates.install_kind() is None:
+                text, button = f"v{v} is available on the release page.", "Download"
+        label.setText(text)
+        btn.setText(button)
+        btn.setEnabled(enabled)
 
     def _set_update(self, update):
         self._on_check_result(update)
@@ -1383,6 +1409,7 @@ class LedController(QWidget):
         self._render_banner()
 
     def _render_banner(self):
+        self._render_update_row()
         if self._update is None:
             return
         v = self._update.version
