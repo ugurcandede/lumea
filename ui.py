@@ -92,6 +92,7 @@ DEFAULT_PRESETS = [
 ]
 PANEL_WIDTH = 400
 DEVICE_ROWS_SHOWN = 4          # the list scrolls past this many rows
+PLUGIN_LIST_MAX_H = 520        # the Plugins page scrolls past this height
 THEME_MODES = ("auto", "light", "dark")
 GITHUB_URL = "https://github.com/ugurcandede/Lumea"
 AUTHOR_URL = "https://github.com/ugurcandede"
@@ -623,6 +624,7 @@ class LedController(QWidget):
         self._stack = _Stack()
         self._stack.addWidget(self._build_main_page())
         self._stack.addWidget(self._build_settings_page())
+        self._stack.addWidget(self._build_plugins_page())
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._stack)
@@ -996,7 +998,11 @@ class LedController(QWidget):
         col.addWidget(_rule())
         col.addWidget(privacy)
         col.addWidget(_rule())
-        col.addWidget(self._build_plugins_section())
+        self._plugins_summary = _label("", "rowSub")
+        col.addWidget(self._section("Plugins", [
+            self._pref_row("Manage plugins", self._plugins_summary,
+                           _button("Manage", "ghost", self._open_plugins)),
+        ]))
         col.addWidget(_rule())
         col.addWidget(about)
         col.addStretch()
@@ -1004,31 +1010,120 @@ class LedController(QWidget):
         col.addSpacing(12)
         return page
 
-    def _build_plugins_section(self):
-        # Rows are rebuilt from the host's list whenever it changes (_render_plugins).
+    def _build_plugins_page(self):
+        # Two lists, rebuilt from the host whenever it changes (_render_plugins):
+        # Installed (switch, update, remove, the plugin's own panel) and Available
+        # (install). The page scrolls once it outgrows PLUGIN_LIST_MAX_H.
+        back = self._win_button("back", self._close_plugins, "Back")
+        min_btn = self._win_button("minus", self.showMinimized, "Minimize")
+        close_btn = self._win_button("close", self.close, "Close to tray")
+        bar = _TitleBar()
+        bar.setObjectName("titleBar")
+        bar.setFixedHeight(44)
+        header = QHBoxLayout(bar)
+        header.setContentsMargins(8, 0, 8, 0)
+        header.setSpacing(6)
+        header.addWidget(back)
+        header.addWidget(_label("Plugins", "appName"))
+        header.addStretch()
+        header.addWidget(min_btn)
+        header.addWidget(close_btn)
+
         self._plugin_note = _label("", "rowSub")
         self._plugin_note.setWordWrap(True)
-        self._plugin_list = QVBoxLayout()
-        self._plugin_list.setContentsMargins(0, 0, 0, 0)
-        self._plugin_list.setSpacing(0)
-        box = QWidget()
-        box.setLayout(self._plugin_list)
-        section = self._section("Plugins", [self._plugin_note, box])
+        self._plugin_lists = {}
+        sections = []
+        for key, title in (("installed", "Installed"), ("available", "Available")):
+            empty = _label("", "rowSub")
+            empty.setWordWrap(True)
+            rows = QVBoxLayout()
+            rows.setContentsMargins(0, 0, 0, 0)
+            rows.setSpacing(0)
+            box = QWidget()
+            box.setLayout(rows)
+            self._plugin_lists[key] = (rows, empty)
+            sections.append(self._section(title, [empty, box]))
+
+        content = QWidget()
+        col = QVBoxLayout(content)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
+        col.addWidget(sections[0])
+        col.addWidget(_rule())
+        col.addWidget(sections[1])
+        self._plugin_scroll = QScrollArea()
+        self._plugin_scroll.setObjectName("deviceScroll")   # same transparent scroll style
+        self._plugin_scroll.setWidgetResizable(True)
+        self._plugin_scroll.setWidget(content)
+        self._plugin_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._plugin_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        note_box = QWidget()
+        note_lay = QHBoxLayout(note_box)
+        note_lay.setContentsMargins(16, 10, 16, 0)
+        note_lay.addWidget(self._plugin_note)
+
+        page = QWidget()
+        page_col = QVBoxLayout(page)
+        page_col.setContentsMargins(0, 0, 0, 0)
+        page_col.setSpacing(0)
+        page_col.addWidget(bar)
+        page_col.addWidget(_rule())
+        page_col.addWidget(note_box)
+        page_col.addWidget(self._plugin_scroll)
+        page_col.addSpacing(6)
         self._render_plugins()
-        return section
+        return page
+
+    def _open_plugins(self):
+        asyncio.ensure_future(self._plugin_host.refresh())
+        self._stack.setCurrentIndex(2)
+
+    def _close_plugins(self):
+        self._stack.setCurrentIndex(1)
 
     def _render_plugins(self):
         host = self._plugin_host
-        while self._plugin_list.count():
-            self._plugin_list.takeAt(0).widget().deleteLater()
         rows = host.entries()
-        note = host.index_error or ("" if rows else "No plugins yet.")
+        installed = [r for r in rows if r["installed"]]
+        available = [r for r in rows if not r["installed"]]
+
         if host.dev:
             note = "Source run: plugins load from the repo's plugins/ folder."
+        else:
+            note = host.index_error or ""
         self._plugin_note.setText(note)
-        self._plugin_note.setVisible(bool(note))
-        for row in rows:
-            self._plugin_list.addWidget(self._plugin_row(row))
+        self._plugin_note.parentWidget().setVisible(bool(note))
+
+        for key, items, empty_text in (
+                ("installed", installed, "Nothing installed yet."),
+                ("available", available, "" if host.index_error else "Every plugin is installed.")):
+            layout, empty = self._plugin_lists[key]
+            while layout.count():
+                layout.takeAt(0).widget().deleteLater()
+            for row in items:
+                layout.addWidget(self._plugin_row(row))
+            empty.setText(empty_text)
+            empty.setVisible(not items and bool(empty_text))
+
+        updates_n = sum(r["update"] for r in installed)
+        on = sum(r["running"] for r in installed)
+        parts = [f"{len(installed)} installed" if installed else "None installed"]
+        if on:
+            parts.append(f"{on} on")
+        if updates_n:
+            parts.append(f"{updates_n} update{'s' if updates_n != 1 else ''}")
+        self._plugins_summary.setText(" · ".join(parts))
+        # Next turn: rows added to a visible page are shown (and counted by the
+        # layout) only once the event loop runs, so measuring now comes up short.
+        QTimer.singleShot(0, self._fit_plugin_scroll)
+
+    def _fit_plugin_scroll(self):
+        # Like the device list: size the scroll area to its content, up to a cap.
+        # Wrapped labels make the height depend on the width: ask at the panel's.
+        lay = self._plugin_scroll.widget().layout()
+        height = lay.totalHeightForWidth(PANEL_WIDTH) if lay.hasHeightForWidth() else lay.sizeHint().height()
+        self._plugin_scroll.setFixedHeight(min(height, PLUGIN_LIST_MAX_H))
 
     def _plugin_row(self, row):
         host = self._plugin_host
@@ -1325,7 +1420,6 @@ class LedController(QWidget):
     # ---- settings page ---------------------------------------------------
 
     def _open_settings(self):
-        asyncio.ensure_future(self._plugin_host.refresh())
         self._stack.setCurrentIndex(1)
         self.show_window()
 

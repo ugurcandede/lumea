@@ -2,7 +2,7 @@
 
 Plugins are not part of the build. They live in the repo under plugins/<id>/ and are
 listed in plugins/version.json. A packaged Lumea reads that index from GitHub (when
-Settings opens), downloads a plugin the user installs into the app-data folder,
+the Plugins page opens), downloads a plugin the user installs into the app-data folder,
 verifies every file's sha256, and loads it with importlib -- no restart. A source
 run skips all of that and loads plugins/<id>/ straight from the repo, so a plugin
 can be tried before it is published.
@@ -12,7 +12,7 @@ A plugin is a package whose __init__.py defines:
     class Plugin:
         def __init__(self, api):     # start; api is a plugin_api.LumeaAPI
         def stop(self):              # undo everything __init__ did
-        def settings_widget(self):   # optional: QWidget shown under its Settings row
+        def settings_widget(self):   # optional: QWidget shown under its row on the Plugins page
 
 Everything runs on the Qt / asyncio loop (QNetworkAccessManager, no threads).
 """
@@ -70,7 +70,7 @@ def _version_key(text):
 
 
 class PluginHost(QObject):
-    """Owns the plugin list. `changed` fires when anything shown in Settings moved."""
+    """Owns the plugin list. `changed` fires when anything shown on the Plugins page moved."""
 
     changed = Signal()
 
@@ -106,7 +106,7 @@ class PluginHost(QObject):
         return found
 
     def entries(self):
-        """Rows for Settings: everything installed or offered, sorted by name."""
+        """Rows for the Plugins page: everything installed or offered, sorted by name."""
         installed = self.installed()
         rows = []
         for pid in set(installed) | set(self._index):

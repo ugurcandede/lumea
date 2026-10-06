@@ -1,6 +1,7 @@
 # Lumea plugins
 
-Optional add-ons that users install from **Settings › Plugins**. They are **not part of the Lumea build**: a
+Optional add-ons that users install from **Settings › Plugins › Manage** (a page with **Installed** and
+**Available** lists). They are **not part of the Lumea build**: a
 plugin is published by merging it to `master`, and every Lumea already installed can download it — no app
 release, no update.
 
@@ -8,12 +9,12 @@ release, no update.
 
 ```
 repo (master)                                  user's PC
-plugins/version.json  ──(Settings opens)──▶   list: name, version, Install / Update / Remove
+plugins/version.json  ──(Plugins page opens)─▶ list: name, version, Install / Update / Remove
 plugins/<id>/…        ──(Install/Update)───▶   %APPDATA%\ugurcandede\Lumea\plugins\<id>\
                                                (macOS: ~/Library/Application Support/ugurcandede/Lumea/plugins/<id>/)
 ```
 
-1. Opening Settings fetches `plugins/version.json` from
+1. Opening the Plugins page fetches `plugins/version.json` from
    `https://raw.githubusercontent.com/ugurcandede/Lumea/refs/heads/master/plugins/version.json`
    (`plugin_host.INDEX_URL`).
 2. **Install / Update** downloads every file listed for the plugin, checks each against its sha256, writes
@@ -67,7 +68,7 @@ class Plugin:
     def stop(self):                   # undo everything __init__ did: timers, sockets, signal connections
         self.api.changed.disconnect(self.on_change)
 
-    def settings_widget(self):        # optional: a QWidget shown under the plugin's row in Settings.
+    def settings_widget(self):        # optional: a QWidget shown under the plugin's row on the Plugins page.
         ...                           # Called again on every refresh of the list: return a new widget each time.
 ```
 
@@ -76,7 +77,7 @@ class Plugin:
 - Everything runs on the app's single event loop: no threads, no blocking calls. Use Qt (`QTimer`,
   `QNetworkAccessManager`, `QTcpServer`, …) or `async` code.
 - Import your own modules relatively (`from . import page`); read your own files relative to `__file__`.
-- If `__init__` raises, the plugin is switched off and the error is shown in Settings.
+- If `__init__` raises, the plugin is switched off and the error is shown on the Plugins page.
 
 ## Publishing
 
@@ -85,7 +86,7 @@ class Plugin:
    ```json
    "my_plugin": {
      "name": "My plugin",
-     "description": "One line shown in Settings",
+     "description": "One line shown on the Plugins page",
      "version": "1.0.0",
      "api": "1.0"
    }
@@ -103,7 +104,7 @@ class Plugin:
 
 ## Troubleshooting
 
-| Settings says | Meaning |
+| The Plugins page says | Meaning |
 |---|---|
 | Needs a newer Lumea | The plugin's `api` is newer than this build, or it requires a module this build doesn't bundle. Update Lumea. |
 | Install failed: … doesn't match the plugin list | GitHub's cache served a file older than `version.json`. Wait a few minutes and retry. |
