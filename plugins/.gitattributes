@@ -1,0 +1,4 @@
+# Plugin files are served byte-for-byte from GitHub and checked against the sha256
+# in version.json (tools/plugins.py). Keep them LF on every checkout, or a Windows
+# checkout (core.autocrlf) would hash differently from what users download.
+* text=auto eol=lf
