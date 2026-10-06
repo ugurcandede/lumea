@@ -600,8 +600,10 @@ class LedController(QWidget):
         # must not seize Bluetooth. The user scans + connects when they want to
         # control the strips; commands reconnect on demand after an idle release.
 
-        # Restore every synced local controller to the last colour.
-        self._push_local_colors()
+        # Restore every synced local controller to the last colour -- unless they
+        # were left off, which the restored power state (_load_state) says.
+        if self._power_on:
+            self._push_local_colors()
 
         self._updates = updates.UpdateChecker(self)
         self._updates.found.connect(self._set_update)
@@ -1938,9 +1940,10 @@ class LedController(QWidget):
                 self._effect_timer.stop()
                 return
             if self._msi_effect == "rainbow":
-                self._effect_timer.start()
+                if self._power_on:
+                    self._effect_timer.start()
                 return
-        if checked:
+        if checked and self._power_on:  # off: it lights with the rest on power-on
             self._push_one(controller)  # apply the current colour right away
 
     def _on_msi_effect_changed(self, mode):
@@ -1953,11 +1956,12 @@ class LedController(QWidget):
         if mode == "rainbow":
             hue = self._base_color.hueF()          # continue from the current colour
             self._effect_hue = hue if hue >= 0 else 0.0
-            if self._is_synced(self._msi):
+            if self._is_synced(self._msi) and self._power_on:   # off: _set_local_power starts it
                 self._effect_timer.start()
         else:                                      # static: hand MSI back to the picker
             self._effect_timer.stop()
-            self._push_one(self._msi)
+            if self._power_on:
+                self._push_one(self._msi)
 
     def _effect_step(self):
         # Map Speed 1..100 to the hue advance per tick.
@@ -2327,6 +2331,8 @@ class LedController(QWidget):
             self._power_on = on
             self._update_power_visual()
             self._stamp_targets(power=on)  # remember this power per targeted strip
+            if self._bulk:
+                self._settings.setValue("power", on)   # restored at launch (_load_state)
             self._save_state()
         self._touch()
 
@@ -2407,6 +2413,9 @@ class LedController(QWidget):
             self._settings.remove("msi_sync")
         self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
         self._fx_speed = self._settings.value("fx_speed", DEFAULT_EFFECT_SPEED, type=int)
+        # All-mode power as last set (saved in _set_power). Default on: before this was
+        # saved, launch always re-lit the USB devices, so keep that for upgraders.
+        self._power_on = self._settings.value("power", True, type=bool)
         self._plugins_on = set(json.loads(self._settings.value("plugins_json", "[]")))
         self._music_sensitivity = self._settings.value(
             "music_sensitivity", music.DEFAULT_SENSITIVITY, type=int)
