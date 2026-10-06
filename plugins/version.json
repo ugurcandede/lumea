@@ -1,4 +1,16 @@
 {
   "schema": 1,
-  "plugins": {}
+  "plugins": {
+    "random_color": {
+      "name": "Random color",
+      "description": "Shows the live state and sets a random color. A small example plugin.",
+      "version": "1.0.0",
+      "api": "1.0",
+      "files": {
+        "__init__.py": "faa5451110009b0253bda4071d4a2b709938bc00f35216e733c11c17e0a0649a",
+        "panel.py": "db2d038a14349522c695383f9b757ec0e87b952235856f1930f6bf14f47c161e"
+      },
+      "requires": []
+    }
+  }
 }
