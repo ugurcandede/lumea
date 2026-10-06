@@ -108,6 +108,20 @@ def app_exe():
     return Path(sys.argv[0]).resolve()
 
 
+def bundled(relative):
+    """A data file shipped with the app (version.txt, assets/...).
+
+    In the macOS bundle it lives in Contents/Resources: CI moves it there, because
+    codesign seals a non-code file in Contents/MacOS through extended attributes,
+    which unzip and `xattr -cr` (the Homebrew cask runs it) strip, breaking the
+    app's seal. Everywhere else -- the Windows build, source runs -- it sits next
+    to the modules."""
+    here = Path(__file__).resolve().parent
+    if here.name == "MacOS" and here.parent.name == "Contents":
+        return here.parent / "Resources" / relative
+    return here / relative
+
+
 def install_kind():
     """"exe" (Windows self-swap), "brew" (macOS Homebrew) or None (release page)."""
     if not packaged():
@@ -143,7 +157,7 @@ def installed_version():
     """The version of the bundle on disk, read fresh -- after an upgrade it
     differs from the one this process loaded at launch."""
     try:
-        return (_bundle() / "Contents/MacOS/version.txt").read_text().strip()   # Nuitka puts data by the binary
+        return (_bundle() / "Contents/Resources/version.txt").read_text().strip()   # see bundled()
     except OSError:
         return ""
 

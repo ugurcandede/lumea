@@ -142,15 +142,22 @@ jobs:
           APP=$(ls -d dist/*.app)
           [ "$APP" = dist/Lumea.app ] || mv "$APP" dist/Lumea.app
 
-          # Fail here, not on users' Macs, if the bundle isn't laid out as the app expects:
-          # the Bluetooth string (or macOS kills it on scan), and version.txt where
-          # main._app_version / updates.installed_version read it.
-          plutil -p dist/Lumea.app/Contents/Info.plist | grep -q NSBluetoothAlwaysUsageDescription
-          test -f dist/Lumea.app/Contents/MacOS/version.txt
-          test -f dist/Lumea.app/Contents/MacOS/assets/icon.png
+          # Data files out of Contents/MacOS into Contents/Resources (updates.bundled
+          # finds them there): codesign seals non-code files in MacOS through xattrs,
+          # which unzip and the cask's `xattr -cr` strip, breaking the seal.
+          mv dist/Lumea.app/Contents/MacOS/version.txt dist/Lumea.app/Contents/MacOS/assets dist/Lumea.app/Contents/Resources/
 
-          # Ad-hoc sign so the bundle isn't flagged as "damaged" (still NOT notarized).
+          # Fail here, not on users' Macs, if the bundle isn't laid out as the app expects:
+          # the Bluetooth string (or macOS kills it on scan), and the data files.
+          plutil -p dist/Lumea.app/Contents/Info.plist | grep -q NSBluetoothAlwaysUsageDescription
+          test -f dist/Lumea.app/Contents/Resources/version.txt
+          test -f dist/Lumea.app/Contents/Resources/assets/icon.png
+
+          # Ad-hoc sign so the bundle isn't flagged as "damaged" (still NOT notarized), and
+          # check the seal survives what users and the cask do to it (xattr -cr).
           codesign --force --deep --sign - dist/Lumea.app
+          cp -R dist/Lumea.app "$RUNNER_TEMP/seal-check.app" && xattr -cr "$RUNNER_TEMP/seal-check.app"
+          codesign --verify --deep --strict "$RUNNER_TEMP/seal-check.app"
 
           # Zip the .app -- ditto preserves the bundle structure and symlinks.
           ditto -c -k --keepParent dist/Lumea.app "dist/${{ matrix.artifact }}.zip"

@@ -91,8 +91,8 @@ def _app_version() -> str:
     """Packaged builds ship a version.txt written by CI; a source checkout reports
     dev.<short git sha> (or plain "dev" outside git)."""
     if updates.packaged():
-        try:   # next to the compiled modules (build.yml --include-data-files)
-            return (Path(__file__).parent / "version.txt").read_text().strip() or "dev"
+        try:
+            return updates.bundled("version.txt").read_text().strip() or "dev"
         except Exception:
             return "dev"
     try:
