@@ -124,18 +124,34 @@ class DeviceManager:
         if task is None:
             task = asyncio.ensure_future(self._connect(address))
             self._connecting[address] = task
-            task.add_done_callback(lambda _t: self._connecting.pop(address, None))
+            task.add_done_callback(
+                lambda t: self._connecting.get(address) is t and self._connecting.pop(address))
         await task
 
     async def _connect(self, address: str) -> None:
         device = ElkBledom(address, on_disconnect=lambda: self._fire(address))
         await device.connect()
+        if self._connecting.get(address) is not asyncio.current_task():
+            # disconnect() was called while this attempt was in flight.
+            await device.disconnect()
+            raise RuntimeError("disconnected while connecting")
         self._devices[address] = device
 
     async def disconnect(self, address: str) -> None:
+        # An attempt still in flight drops its link when it lands (see _connect).
+        self._connecting.pop(address, None)
         device = self._devices.pop(address, None)
         if device is not None:
-            await device.disconnect()
+            try:
+                await device.disconnect()
+            except Exception:
+                log.warning("disconnect failed for %s", address, exc_info=True)
+
+    async def disconnect_all(self) -> set[str]:
+        """Disconnect every linked and connecting address; returns them."""
+        addresses = set(self._devices) | set(self._connecting)
+        await asyncio.gather(*(self.disconnect(a) for a in addresses))
+        return addresses
 
     async def apply(
         self, addresses: list[str], action: Callable[[ElkBledom], Awaitable[None]]

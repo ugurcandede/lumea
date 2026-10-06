@@ -1636,8 +1636,7 @@ class LedController(QWidget):
         self._known.pop(address, None)
         self._aliases.pop(address, None)
         self._states.pop(address, None)
-        if self._manager.is_connected(address):
-            asyncio.ensure_future(self._manager.disconnect(address))
+        asyncio.ensure_future(self._manager.disconnect(address))  # linked or connecting
         self._save_state()
         self._rebuild_list()
         self._update_controls_visibility()
@@ -2199,16 +2198,14 @@ class LedController(QWidget):
         self._touch()  # a live link starts/refreshes the idle countdown
 
     async def _disconnect_all(self):
-        # Disconnect every connected device (checked or not) so nothing is orphaned.
-        targets = list(self._manager.connected_addresses())
+        # Disconnect every connected or connecting device (checked or not) so
+        # nothing is orphaned.
         self._desired.clear()
         self._idle = False
         self._idle_timer.stop()
         self._focus = None            # nothing to edit individually once disconnected
         self._bulk = True
-        await asyncio.gather(
-            *(self._manager.disconnect(a) for a in targets), return_exceptions=True
-        )
+        targets = await self._manager.disconnect_all()
         for address in targets:
             self._refresh_row(address)
         self._refresh_focus_ui()
