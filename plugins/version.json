@@ -15,14 +15,15 @@
     "remote-control": {
       "name": "Remote control",
       "description": "Control Lumea from your phone, tablet or another computer on the same network.",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "api": "1.1",
       "files": {
         "__init__.py": "2ff0149774807af2f5853ea015edeac49a7e71015c40606ed85bb2b412c114a8",
-        "page.html": "15c544ed72ca803fce8b61e298346bfe238c318c52161fb163a0e41880e10a90",
+        "discovery.py": "6e1e7f0977388f2c2514e80fa575dbdd2fb9bd7a639b586fd623abc5f18d0aa3",
+        "page.html": "3c17479e9842a03db21573832a665ab7eababff179607dd34e1d054b5b026968",
         "pairing.py": "a97009204b0accd203b015b187bd9d169d14773fb3ea7e1602910d5cd18ae1f2",
         "panel.py": "3e3cff743fc12f42b25829c15d8781889e7cb16bedb3a4b02f1167ff5fc894a7",
-        "server.py": "315849d5ae5e55c7d41751732d41b4c542a6c487e1cc9d4f17fdca11c56fe5c9"
+        "server.py": "48167f3a4e09e14d0696c8370c6d84d3bb3583a1b2eba629b8a72fddb7621a6f"
       },
       "requires": [
         "PySide6.QtWebSockets",

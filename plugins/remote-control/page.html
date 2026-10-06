@@ -51,6 +51,20 @@
   }
   #pc { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #pc small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+  #pc.switchable { cursor: pointer; }
+  #pc .caret { display: none; color: var(--muted); font-weight: 400; margin-left: 4px; }
+  #pc.switchable .caret { display: inline; }
+  #sheet { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+  #sheet .panel {
+    width: 100%; max-width: 520px; background: var(--panel); border-radius: 16px 16px 0 0;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  #sheet a {
+    display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 10px;
+    text-decoration: none; font-weight: 500; background: var(--inset);
+  }
+  #sheet a + a { margin-top: 8px; }
+  #sheet a small { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12px; }
   .swatch { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--swatch-border); flex: none; }
   .power {
     display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 12px; border-radius: 17px;
@@ -177,7 +191,7 @@
 
 <div id="app" hidden style="display:contents">
   <header>
-    <div id="pc">Lumea<small id="summary"></small></div>
+    <div id="pc"><span id="pc-name">Lumea</span><span class="caret">▾</span><small id="summary"></small></div>
     <div id="preview" class="swatch"></div>
     <button id="power" class="power">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7.5 6.5a7 7 0 1 0 9 0"/><path d="M12 3v8"/></svg>
@@ -266,6 +280,14 @@
 
 <div id="toast"></div>
 
+<!-- Other Lumea PCs on the network (discovery.py); each pairs on its own -->
+<div id="sheet" hidden>
+  <div class="panel">
+    <h2>Lumea on this network</h2>
+    <div id="pcs"></div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -310,7 +332,7 @@ function onMessage(m) {
   if (m.type === "welcome") {
     if (m.token) save(TOKEN_KEY, m.token);
     paired = true; pcName = m.name;
-    $("pc").firstChild.textContent = m.name;
+    $("pc-name").textContent = m.name;
     show("app"); banner(null);
   } else if (m.type === "denied") {
     paired = false; save(TOKEN_KEY, null);
@@ -318,7 +340,7 @@ function onMessage(m) {
   } else if (m.type === "state") {
     state = m.state; render();
   } else if (m.type === "info") {
-    info = m; if (state) renderSettings();
+    info = m; renderPeers(); if (state) renderSettings();
   } else if (m.type === "frame") {
     $("preview").style.background = m.color;
   } else if (m.type === "error") {
@@ -434,6 +456,18 @@ function updateRow(u, version) {
     else { msg = `v${v} is available on the release page.`; label = "Open"; action = () => window.open(`${GITHUB}/releases/tag/v${v}`, "_blank"); }
   }
   text.textContent = msg; btn.textContent = label; btn.disabled = !enabled; btn.onclick = action;
+}
+
+function renderPeers() {
+  const peers = (info && info.peers) || [];
+  $("pc").classList.toggle("switchable", peers.length > 0);
+  const here = document.createElement("a"); here.href = "#"; here.onclick = (e) => { e.preventDefault(); $("sheet").hidden = true; };
+  here.textContent = pcName; here.append(Object.assign(document.createElement("small"), { textContent: "this one" }));
+  $("pcs").replaceChildren(here, ...peers.map((p) => {
+    const a = document.createElement("a"); a.href = p.url; a.textContent = p.name;
+    a.append(Object.assign(document.createElement("small"), { textContent: new URL(p.url).host }));
+    return a;
+  }));
 }
 
 function slider(id, value) {
@@ -572,6 +606,8 @@ bindSlider("speed", "set_effect_speed");
 bindSlider("sens", "set_sensitivity");
 
 $("power").onclick = () => state && cmd("set_power", !state.power);
+$("pc").onclick = () => { if ($("pc").classList.contains("switchable")) $("sheet").hidden = false; };
+$("sheet").onclick = (e) => { if (e.target === $("sheet")) $("sheet").hidden = true; };
 $("scan").onclick = () => cmd("scan");
 $("link").onclick = () => cmd("link");
 $("tray-color").onchange = (e) => cmd("set_tray_color_icon", e.target.checked);

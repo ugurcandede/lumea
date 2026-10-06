@@ -81,6 +81,7 @@ and restored on launch, and dropped links auto-reconnect.
 - **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
 - **Effects** — Rainbow, Breathe and Cycle on every device, with a speed control
 - **Music mode** *(Windows, optional)* — the lights follow whatever your PC is playing
+- **Plugins** — optional add-ons, installed from Settings › Manage plugins, such as **Remote control** from your phone
 
 ## MSI motherboard RGB (optional · Windows)
 
@@ -120,6 +121,16 @@ same targets as the picker.
   strips are connected; frames it can't keep up with are dropped. The USB devices (MSI, SteelSeries) follow closely.
 - Listens to the default output device at the moment a mode starts; after switching speakers or headphones, pick the
   mode again.
+
+## Plugins
+
+Settings › **Manage plugins** lists optional add-ons; install one and switch it on. They update on their own, without a
+new Lumea release (see [plugins/README.md](plugins/README.md) for how they work and how to write one).
+
+**Remote control** drives Lumea from a phone, tablet or another computer's browser on the same network: colour,
+brightness, presets, effects and music, the strips and devices, and the app's settings. Switch it on, then scan the
+QR shown under it (or open the address and enter the PIN). Windows asks once to let Lumea through the firewall: allow
+it on private networks. If several PCs run it, the page lists them and switches between them; each pairs on its own.
 
 ## Privacy
 

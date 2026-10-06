@@ -15,7 +15,9 @@ Protocol (JSON text frames on the WebSocket):
                        {"type": "denied", "reason": "..."}      then the socket closes
                        {"type": "state", "state": {...}}        LumeaAPI.state(), on every change
                        {"type": "frame", "color": "#rrggbb"}    effect / music colour, <= 10/s
-                       {"type": "info", "port": 8765, "phones": 2}  this server, whenever it changes
+                       {"type": "info", "port": 8765, "phones": 2, "peers": [{"name", "url"}]}
+                                                                 this server and the other Lumea PCs
+                                                                 found on the network (discovery.py)
                        {"type": "error", "message": "..."}      a command was refused
 
 Nothing but "hello" / "pair" is accepted before a socket is paired. Commands are
@@ -27,8 +29,10 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSysInfo, QTimer, Signal
-from PySide6.QtNetwork import QAbstractSocket, QHostAddress, QNetworkInterface, QTcpServer
+from PySide6.QtNetwork import QHostAddress, QTcpServer
 from PySide6.QtWebSockets import QWebSocketServer
+
+from .discovery import Discovery, lan_addresses  # noqa: F401  (lan_addresses: used via .server)
 
 log = logging.getLogger(__name__)
 
@@ -63,38 +67,6 @@ COMMANDS = {
 }
 
 
-# Adapters a phone can't reach: Hyper-V / WSL switches, VM and container bridges.
-_VIRTUAL = ("vethernet", "virtualbox", "vmware", "hyper-v", "wsl", "docker", "bluetooth")
-
-
-def lan_addresses():
-    """This PC's IPv4 addresses a phone on the same network could reach, likeliest first."""
-    found = []
-    for iface in QNetworkInterface.allInterfaces():
-        flags = iface.flags()
-        if (not (flags & QNetworkInterface.InterfaceFlag.IsRunning)
-                or flags & QNetworkInterface.InterfaceFlag.IsLoopBack
-                or any(v in iface.humanReadableName().lower() for v in _VIRTUAL)):
-            continue
-        for entry in iface.addressEntries():
-            ip = entry.ip()
-            if ip.protocol() == QAbstractSocket.NetworkLayerProtocol.IPv4Protocol and not ip.isLinkLocal():
-                found.append(ip.toString())
-    return sorted(found, key=_home_network_rank)
-
-
-def _home_network_rank(ip):
-    # Home routers hand out 192.168.x most, then 10.x, then 172.16-31.x.
-    a, b = (int(x) for x in ip.split(".")[:2])
-    if a == 192 and b == 168:
-        return 0
-    if a == 10:
-        return 1
-    if a == 172 and 16 <= b <= 31:
-        return 2
-    return 3
-
-
 class Server(QObject):
     clients_changed = Signal()
 
@@ -114,6 +86,8 @@ class Server(QObject):
         if not self._tcp.listen(QHostAddress(QHostAddress.SpecialAddress.Any), port):
             raise OSError(f"port {port} is in use")
         self._tcp.newConnection.connect(self._on_tcp)
+        self._discovery = Discovery(self.name, port)
+        self._discovery.peers_changed.connect(self._send_info)
 
         self._frame = None                  # newest effect / music colour not yet sent
         self._frame_timer = QTimer(self)
@@ -143,6 +117,7 @@ class Server(QObject):
             sock.textMessageReceived.disconnect()
             sock.close()
         self._clients.clear()
+        self._discovery.stop()
         self._ws.close()
         self._tcp.close()
 
@@ -218,7 +193,8 @@ class Server(QObject):
         self.clients_changed.emit()
 
     def _send_info(self):
-        self._broadcast({"type": "info", "port": self.port, "phones": self.paired_clients})
+        self._broadcast({"type": "info", "port": self.port, "phones": self.paired_clients,
+                         "peers": self._discovery.peers()})
 
     def _deny(self, sock, reason):
         self._send(sock, {"type": "denied", "reason": reason})
