@@ -2359,9 +2359,16 @@ class LedController(QWidget):
 
     def _quit(self):
         self._closing = True
+        self._shutdown()
+
+    def _shutdown(self):
+        # Everything that must happen before main() hard-exits the process.
         self._save_state()
+        self._settings.sync()              # main() exits without QSettings' own flush
         self._plugin_host.stop_all()
         self._close_locals()
+        if self._tray is not None:
+            self._tray.hide()              # or Windows keeps a dead icon until hovered
         self._close_event.set()
 
     def closeEvent(self, event):
@@ -2377,10 +2384,7 @@ class LedController(QWidget):
             )
             return
         self._closing = True
-        self._save_state()
-        self._plugin_host.stop_all()
-        self._close_locals()
-        self._close_event.set()
+        self._shutdown()
         super().closeEvent(event)
 
     # ---- helpers / persistence ------------------------------------------

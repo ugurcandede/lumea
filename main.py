@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -67,9 +68,22 @@ def main() -> None:
     # existing window when that happens.
     server.newConnection.connect(lambda: _drain_and_show(server, win))
 
+    async def run():
+        await close_event.wait()
+        # Free the single-instance socket first: while it's held, a new launch
+        # (e.g. the build a self-update just relaunched) hands off to this dying
+        # process and exits, leaving the user stuck on the old version.
+        server.close()
+
     with loop:
-        loop.run_until_complete(close_event.wait())
+        loop.run_until_complete(run())
         _cancel_pending(loop)
+
+    # Settings are saved and devices released by now (LedController._quit). Don't
+    # let a lingering background thread (BLE / audio / HID stacks) keep a
+    # tray-less, window-less process alive: end it here.
+    logging.shutdown()
+    os._exit(0)
 
 
 def _app_version() -> str:
