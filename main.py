@@ -4,6 +4,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -34,6 +35,12 @@ def main() -> None:
     app.setWindowIcon(icon.app_icon())  # the theme sheet is applied by LedController
     # Closing the window hides to the tray; quit happens via the tray menu.
     app.setQuitOnLastWindowClosed(False)
+
+    # Relaunched by a self-update: the old instance is still shutting down.
+    if updates.AFTER_UPDATE_ARG in sys.argv:
+        deadline = time.monotonic() + 10
+        while _ping_running_instance() and time.monotonic() < deadline:
+            time.sleep(0.2)
 
     # If another instance already owns the socket, hand off to it and exit. The
     # running instance brings its (possibly tray-hidden) window to the front.

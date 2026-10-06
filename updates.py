@@ -42,9 +42,9 @@ CHECK_INTERVAL_MS = 24 * 3600 * 1000
 _API = f"https://api.github.com/repos/{REPO}/releases/latest"
 _TIMEOUT_MS = 10_000
 _DOWNLOAD_TIMEOUT_MS = 120_000
-# Long enough for this process to exit and release the single-instance socket,
-# so the new exe does not find us still running and bow out.
-_RELAUNCH_DELAY_SECONDS = 2
+# Tells the relaunched exe to wait for this process to release the
+# single-instance socket instead of bowing out (see main.py).
+AFTER_UPDATE_ARG = "--after-update"
 _CASK = "lumea"
 _BUNDLE_NAME = "Lumea.app"
 
@@ -170,10 +170,10 @@ def swap_executable(exe, new):
 
 
 def _relaunch_windows(exe):
-    # ping is the usual console-free sleep; `start` detaches the new process.
-    command = f'ping -n {_RELAUNCH_DELAY_SECONDS + 1} 127.0.0.1 >nul & start "" "{exe}"'
-    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-    subprocess.Popen(["cmd", "/c", command], creationflags=flags, close_fds=True)
+    # The new exe is already in place (renaming the running one is allowed), so
+    # start it directly: no cmd, no console window, no fixed sleep.
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen([str(exe), AFTER_UPDATE_ARG], creationflags=flags, close_fds=True)
 
 
 class UpdateChecker(QObject):
