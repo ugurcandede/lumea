@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title == "Home" %}{{ site.title }} — {{ site.description }}{% else %}{{ page.title }} | {{ site.title }}{% endif %}</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ '/favicon.png' | relative_url }}">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+  {% if site.google_analytics %}
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id={{ site.google_analytics }}"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', '{{ site.google_analytics }}', { content_group: 'lumea' });
+  </script>
+  {% endif %}
+</head>
+<body>
+  <header>
+    <div class="container">
+      <a class="logo" href="{{ '/' | relative_url }}">
+        <img src="{{ '/assets/images/icon.png' | relative_url }}" alt="Lumea" width="28" height="28" onerror="this.style.display='none'">
+        <span>Lumea</span>
+      </a>
+      <nav>
+        <a href="{{ '/features' | relative_url }}">Features</a>
+        <a href="{{ '/guide' | relative_url }}">Guide</a>
+        <a href="{{ '/faq' | relative_url }}">FAQ</a>
+        <a href="{{ '/download' | relative_url }}" class="btn-nav">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="{% if page.title != 'Home' %}page-content{% endif %}">
+    <div class="container">
+      {{ content }}
+    </div>
+  </main>
+
+  <footer>
+    <div class="container">
+      Built with ❤️ for people who like their lights<br>
+      <a href="https://github.com/ugurcandede" target="_blank"><svg height="14" width="14" viewBox="0 0 16 16" style="vertical-align:middle;margin-right:3px;fill:currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg> ugurcandede</a> ·
+      <a href="https://github.com/ugurcandede/Lumea" target="_blank">💡 Lumea</a> ·
+      <a href="https://github.com/ugurcandede/homebrew-tap" target="_blank">🍺 Homebrew</a>
+    </div>
+  </footer>
+  <div class="lightbox" id="lightbox">
+    <img id="lightbox-img" src="" alt="">
+  </div>
+  <script>
+    document.querySelectorAll('a[href^="http"]').forEach(a => {
+      if (!a.hostname || a.hostname !== location.hostname) {
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+      }
+    });
+
+    // Lightbox
+    const lb = document.getElementById('lightbox');
+    const lbImg = document.getElementById('lightbox-img');
+
+    document.querySelectorAll('.screenshots-row img, .screenshot-full, .feature-row .shot img').forEach(img => {
+      img.addEventListener('click', () => {
+        lbImg.src = img.src;
+        lbImg.alt = img.alt;
+        lb.style.display = 'flex';
+        requestAnimationFrame(() => lb.classList.add('active'));
+      });
+    });
+
+    lb.addEventListener('click', (e) => {
+      if (e.target === lbImg) return;
+      lb.classList.remove('active');
+      setTimeout(() => { lb.style.display = 'none'; }, 200);
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && lb.classList.contains('active')) {
+        lb.classList.remove('active');
+        setTimeout(() => { lb.style.display = 'none'; }, 200);
+      }
+    });
+  </script>
+</body>
+</html>

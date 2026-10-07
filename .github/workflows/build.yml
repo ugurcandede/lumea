@@ -7,6 +7,9 @@ on:
       - '**.md'           # skip builds for docs-only pushes
       - 'plugins/**'      # plugins ship on their own (plugins/README.md), not as an app release
       - 'tools/**'
+      - 'docs/**'         # the website deploys via pages.yml, not as an app release
+      - 'screenshots/**'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:

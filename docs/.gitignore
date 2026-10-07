@@ -1,0 +1,8 @@
+# Images are staged into the site at build time, never committed here
+assets/images/
+favicon.png
+
+# Jekyll
+_site/
+.jekyll-cache/
+.jekyll-metadata
