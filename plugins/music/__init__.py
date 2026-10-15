@@ -9,8 +9,8 @@ as the app's effects. Read plugins/README.md for the plugin contract.
 import json
 import logging
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices
 
 from . import capture, engine
 from .row import Row
@@ -19,6 +19,7 @@ log = logging.getLogger(__name__)
 
 INTERVAL_MS = 33            # ~30 colour frames/s; slower links get the newest frame
 _SETTINGS = "plugin_music"
+_PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 
 
 class Plugin:
@@ -130,7 +131,12 @@ class Plugin:
     def _tick(self):
         try:
             samples = self._capture.read()
-        except capture.CaptureError as e:    # the backend says why (macOS: permission, stream ended)
+        except capture.PermissionDenied as e:
+            log.error("%s", e)
+            QDesktopServices.openUrl(QUrl(_PRIVACY_PANE))   # System Settings, at the right pane
+            self._lost(str(e))
+            return
+        except capture.CaptureError as e:    # the backend says why (stream ended, no device)
             log.error("%s", e)
             self._lost(str(e))
             return

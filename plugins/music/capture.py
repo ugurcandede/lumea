@@ -36,6 +36,10 @@ class CaptureError(Exception):
     """The capture can't start or was lost; the message is for the user."""
 
 
+class PermissionDenied(CaptureError):
+    """macOS: the Screen & System Audio Recording permission isn't granted."""
+
+
 def open_capture():
     """A capture of the current default output; raises CaptureError if there is none."""
     if sys.platform == "win32":
@@ -99,7 +103,7 @@ elif sys.platform == "darwin":
                     self.capture._push(sample)
 
             def stream_didStopWithError_(self, stream, error):
-                self.capture._error = f"Music stopped: {error.localizedDescription()}"
+                self.capture._error = CaptureError(f"Music stopped: {error.localizedDescription()}")
 
     class Capture:
         """ScreenCaptureKit audio of the whole display, mono. `read()` is empty until
@@ -110,7 +114,7 @@ elif sys.platform == "darwin":
 
         def __init__(self):
             self._chunks = deque()               # mono float32 arrays, oldest first
-            self._error = None                   # set from the callbacks; read() raises it
+            self._error = None                   # a CaptureError set from the callbacks; read() raises it
             self._closed = False
             self._stream = None
             self._output = LumeaMusicOutput.alloc().init()
@@ -122,7 +126,7 @@ elif sys.platform == "darwin":
                 return
             if error is not None:                # almost always: permission not granted
                 log.error("shareable content: %s", error)
-                self._error = PERMISSION
+                self._error = PermissionDenied(PERMISSION)
                 return
             display = content.displays()[0]
             filt = sck.SCContentFilter.alloc().initWithDisplay_excludingWindows_(display, [])
@@ -140,7 +144,7 @@ elif sys.platform == "darwin":
                 self._output, sck.SCStreamOutputTypeAudio, None, None)
             if not ok:
                 log.error("add audio output: %s", err)
-                self._error = f"Can't listen to the system audio: {err.localizedDescription()}"
+                self._error = CaptureError(f"Can't listen to the system audio: {err.localizedDescription()}")
                 return
             self._stream = stream
             stream.startCaptureWithCompletionHandler_(lambda error: self._on_started(stream, error))
@@ -148,7 +152,7 @@ elif sys.platform == "darwin":
         def _on_started(self, stream, error):
             if error is not None:
                 log.error("start capture: %s", error)
-                self._error = PERMISSION
+                self._error = PermissionDenied(PERMISSION)
             elif self._closed:                   # closed while starting: don't leave it recording
                 stream.stopCaptureWithCompletionHandler_(lambda error: None)
 
@@ -165,7 +169,7 @@ elif sys.platform == "darwin":
         def read(self):
             """Mono float samples delivered since the last call."""
             if self._error is not None:
-                raise CaptureError(self._error)
+                raise self._error
             chunks = [self._chunks.popleft() for _ in range(len(self._chunks))]
             return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
 
