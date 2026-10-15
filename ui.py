@@ -47,7 +47,6 @@ import colorpicker
 import effects
 import icon
 import msi_mystic
-import music
 import protocol
 import steelseries
 import theme
@@ -69,7 +68,6 @@ EFFECT_INTERVAL_MS = 80
 EFFECT_MIN_STEP = 0.004        # hue advance/tick at Speed 1 (~20 s per rainbow cycle)
 EFFECT_MAX_STEP = 0.05         # at Speed 100 (~1.6 s per cycle)
 DEFAULT_EFFECT_SPEED = 30
-MUSIC_INTERVAL_MS = 33         # ~30 colour frames/s; slower links get the newest frame
 # Floor between effect / music frames to a strip. Writes are without-response, so they
 # return once queued, not once sent: going faster than the link backs the OS queue
 # up, and the strip lags further and further and keeps playing after Off. The
@@ -536,9 +534,8 @@ class LedController(QWidget):
         self._effect_timer = QTimer(self)
         self._effect_timer.setInterval(EFFECT_INTERVAL_MS)
         self._effect_timer.timeout.connect(self._effect_tick)
-        self._music_mode = None                # None, or one of music.MODES
-        self._capture = None                   # music.Capture while a mode runs
-        self._engine = None
+        self._live_label = None                # what a plugin drives the lights with (api.begin_live), or None
+        self._plugin_sections = {}             # plugin id -> (instance, its editor_widget()), shown under Effect
         self._fx = None                        # effects.Effect while one runs
         self._fx_timer = QTimer(self)
         self._fx_timer.setInterval(EFFECT_INTERVAL_MS)
@@ -556,10 +553,6 @@ class LedController(QWidget):
         self._local_retry = QTimer(self)
         self._local_retry.setSingleShot(True)
         self._local_retry.timeout.connect(self._flush_local_pending)
-        self._music_timer = QTimer(self)
-        self._music_timer.setInterval(MUSIC_INTERVAL_MS)
-        self._music_timer.setTimerType(Qt.TimerType.PreciseTimer)  # coarse timers run ~20 fps
-        self._music_timer.timeout.connect(self._music_tick)
         self._idle = False                     # True once we've released links to idle
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
@@ -570,6 +563,7 @@ class LedController(QWidget):
         self._save_timer.setInterval(SAVE_DEBOUNCE_MS)
         self._save_timer.timeout.connect(self._save_state)
         self._closing = False
+        self._tray_hinted = False              # the "still running" balloon was shown
         self._sending = False                  # a colour send is in flight (see _on_color_timeout)
         self._send_pending = False             # ...and a newer colour arrived meanwhile
         self._wake_lock = asyncio.Lock()       # one idle-wake at a time
@@ -802,13 +796,13 @@ class LedController(QWidget):
             "Effect", effects.MODES, self._set_fx_mode, "Speed", self._fx_speed,
             "How fast the effect moves", self._on_fx_speed_changed)
         body.addLayout(fx)
-        self._music_chips = {}
-        self._music_preview = None
-        if music.available():
-            tune, self._music_chips, self._sensitivity_row, self._music_preview = self._build_mode_row(
-                "Music", music.MODES, self._set_music_mode, "Sensitivity", self._music_sensitivity,
-                "Higher reacts to quieter sounds and softer beats", self._on_sensitivity_changed)
-            body.addLayout(tune)
+        # Rows plugins add with editor_widget() (the Music plugin's chips and sliders).
+        self._plugin_box = QWidget()
+        box = QVBoxLayout(self._plugin_box)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(12)
+        self._plugin_box.hide()
+        body.addWidget(self._plugin_box)
         self._editor_body = QWidget()
         self._editor_body.setLayout(body)
 
@@ -850,7 +844,17 @@ class LedController(QWidget):
         preview.hide()
         row.addWidget(preview)
 
-        # Same row shape as Brightness.
+        knob_row = self._slider_row(knob, value, tooltip, on_value)
+
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(12)
+        col.addLayout(row)
+        col.addWidget(knob_row)
+        return col, chips, knob_row, preview
+
+    def _slider_row(self, title, value, tooltip, on_value):
+        """A hidden 1-100 slider row in the same shape as Brightness."""
         readout = _label(f"{value}%", "value")
         readout.setFixedWidth(34)
         readout.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -861,31 +865,18 @@ class LedController(QWidget):
         slider.setCursor(Qt.CursorShape.PointingHandCursor)
         slider.setToolTip(tooltip)
         slider.valueChanged.connect(lambda v: (readout.setText(f"{v}%"), on_value(v)))
-        knob_label = _label(knob, "sectionLabel")
-        knob_label.setFixedWidth(64)
-        knob_lay = QHBoxLayout()
-        knob_lay.setContentsMargins(0, 0, 0, 0)
-        knob_lay.setSpacing(10)
-        knob_lay.addWidget(knob_label)
-        knob_lay.addWidget(slider, 1)
-        knob_lay.addWidget(readout)
-        knob_row = QWidget()
-        knob_row.setLayout(knob_lay)
-        knob_row.hide()
-
-        col = QVBoxLayout()
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(12)
-        col.addLayout(row)
-        col.addWidget(knob_row)
-        return col, chips, knob_row, preview
-
-    def _on_sensitivity_changed(self, value):
-        self.api.notify()
-        self._music_sensitivity = value
-        if self._engine is not None:
-            self._engine.sensitivity = value
-        self._save_timer.start()
+        label = _label(title, "sectionLabel")
+        label.setFixedWidth(64)
+        lay = QHBoxLayout()
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        lay.addWidget(label)
+        lay.addWidget(slider, 1)
+        lay.addWidget(readout)
+        row = QWidget()
+        row.setLayout(lay)
+        row.hide()
+        return row
 
     def _on_fx_speed_changed(self, value):
         self.api.notify()
@@ -1193,6 +1184,24 @@ class LedController(QWidget):
         self._plugins_on = set(self._plugin_host.enabled)
         self._save_state()
         self._render_plugins()
+        self._mount_plugin_sections()
+
+    def _mount_plugin_sections(self):
+        # A running plugin with editor_widget() gets its row under Effect, once per
+        # start (an update restarts it: new instance, new row); a stopped one's row goes.
+        host = self._plugin_host
+        box = self._plugin_box.layout()
+        for pid, (instance, widget) in list(self._plugin_sections.items()):
+            if host.running.get(pid) is not instance:
+                del self._plugin_sections[pid]
+                box.removeWidget(widget)
+                widget.deleteLater()
+        for pid, instance in host.running.items():
+            if pid not in self._plugin_sections and hasattr(instance, "editor_widget"):
+                widget = instance.editor_widget()
+                self._plugin_sections[pid] = (instance, widget)
+                box.addWidget(widget)
+        self._plugin_box.setVisible(bool(self._plugin_sections))
 
     def _section(self, title, rows):
         box = QWidget()
@@ -1332,8 +1341,8 @@ class LedController(QWidget):
         summary = self._conn_summary()
         if self._fx is not None:
             summary += f" · {self._fx.mode.capitalize()}"
-        elif self._music_mode is not None:
-            summary += f" · Music: {self._music_mode.capitalize()}"
+        elif self._live_label is not None:
+            summary += f" · {self._live_label}"
         self._tray_header.setText(
             f'<span style="font-size:13px;font-weight:600;color:{t["ink"]}">Lumea</span><br>'
             f'<span style="font-size:11px;color:{t["muted"]}">{summary}</span>')
@@ -1986,11 +1995,11 @@ class LedController(QWidget):
         except Exception:
             log.exception("MSI effect send failed")
 
-    # ---- music mode ------------------------------------------------------
+    # ---- live drivers: effects, and plugins through api.begin_live ---------
 
     def _animating(self):
-        """True while an effect or music drives the devices instead of the picker."""
-        return self._fx is not None or self._music_mode is not None
+        """True while an effect or a plugin drives the devices instead of the picker."""
+        return self._fx is not None or self._live_label is not None
 
     def _set_fx_mode(self, mode):
         if mode is None:
@@ -2000,33 +2009,12 @@ class LedController(QWidget):
             else:
                 self._refresh_live_ui()    # re-check Off: clicking a checked chip unchecks it
             return
-        if self._music_mode is not None:
+        if self._live_label is not None:
             self._stop_live()              # one driver at a time
         c = self._base_color
         self._fx = effects.Effect(mode, (c.red(), c.green(), c.blue()))
         self._fx_timer.start()
         self._start_live(f"Effect: {mode.capitalize()}.")
-
-    def _set_music_mode(self, mode):
-        if mode is None:
-            if self._music_mode is not None:
-                self._stop_live()
-                self._color_timer.start()  # hand every device back to the picker
-            else:
-                self._refresh_live_ui()
-            return
-        if self._fx is not None:
-            self._stop_live()              # one driver at a time
-        if self._capture is None:
-            self._capture = music.open_capture()
-            if self._capture is None:
-                self._set_status("No audio output to listen to.")
-                self._refresh_live_ui()    # drop the clicked chip's check
-                return
-            self._engine = music.Engine(self._capture.rate, self._music_sensitivity)
-        self._music_mode = mode
-        self._music_timer.start()
-        self._start_live(f"Music: {mode.capitalize()}. Bluetooth strips may lag behind the music.")
 
     def _start_live(self, status):
         self._live_sent = None             # the strips show the picker colour now
@@ -2037,14 +2025,11 @@ class LedController(QWidget):
 
     def _stop_live(self):
         # Stop whichever driver runs, without restoring the picker colour (the
-        # caller decides: Off restores it, power-off doesn't).
-        self._fx = self._music_mode = None
+        # caller decides: Off restores it, power-off doesn't). A plugin driver
+        # learns of it from state()["live"] (api.notify in _refresh_live_ui).
+        self._fx = self._live_label = None
         self._fx_timer.stop()
-        self._music_timer.stop()
         self._live_frame = None            # ends _send_live_frames after its current write
-        if self._capture is not None:
-            self._capture.close()
-            self._capture = self._engine = None
         if self._tray is not None and self._tray_rgb is not None:
             self._tray.setIcon(self._tray_icon())  # back to the picker colour (or app icon)
         self._tray_rgb = None
@@ -2056,11 +2041,6 @@ class LedController(QWidget):
             btn.setChecked(m == (self._fx.mode if self._fx is not None else None))
         self._fx_speed_row.setVisible(self._fx is not None)
         self._fx_preview.setVisible(self._fx is not None)
-        for m, btn in self._music_chips.items():
-            btn.setChecked(m == self._music_mode)
-        if self._music_chips:
-            self._sensitivity_row.setVisible(self._music_mode is not None)
-            self._music_preview.setVisible(self._music_mode is not None)
         self._refresh_effect_menu()
 
     def _refresh_effect_menu(self):
@@ -2068,7 +2048,7 @@ class LedController(QWidget):
         card = self._local_cards.get(self._msi.card_id) if self._msi is not None else None
         if card is not None:
             reason = ("An effect is driving the lights." if self._fx is not None
-                      else "Music mode is driving the lights.")
+                      else f"{self._live_label} is driving the lights.")
             card.set_effect_enabled(not self._animating(), f"{reason} Turn it off to pick an effect.")
 
     def _palette(self):
@@ -2079,24 +2059,12 @@ class LedController(QWidget):
         advance = EFFECT_MIN_STEP + (self._fx_speed - 1) / 99 * (EFFECT_MAX_STEP - EFFECT_MIN_STEP)
         self._drive(self._fx.step(advance, (c.red(), c.green(), c.blue()), self._palette()))
 
-    def _music_tick(self):
-        try:
-            samples = self._capture.read()
-        except Exception:                  # the output device went away
-            log.exception("audio capture failed")
-            self._stop_live()
-            self._set_status("Music stopped: the audio device went away.")
-            return
-        c = self._base_color
-        self._drive(self._engine.step(samples, self._music_mode, (c.red(), c.green(), c.blue()),
-                                      self._palette()))
-
     def _drive(self, rgb):
-        # One frame from the running effect / music, to the picker's targets.
+        # One frame from the running effect / plugin, to the picker's targets.
         frame = (*rgb, self._brightness)
-        preview = self._fx_preview if self._fx is not None else self._music_preview
         shown = QColor(*protocol.scale_rgb(*rgb, self._brightness))  # as the devices show it
-        preview.set_color(shown)
+        if self._fx is not None:
+            self._fx_preview.set_color(shown)   # a plugin's own dot follows api.frame
         self.api.frame.emit(shown.name())
         if (self._tray is not None and self._tray_color_icon and rgb != self._tray_rgb
                 and time.monotonic() >= self._tray_next):
@@ -2381,12 +2349,14 @@ class LedController(QWidget):
         if self._tray is not None and not self._closing:
             event.ignore()
             self.hide()
-            self._tray.showMessage(
-                "Lumea",
-                "Still running in the tray. Quit from the tray menu.",
-                QSystemTrayIcon.MessageIcon.Information,
-                2000,
-            )
+            if not self._tray_hinted:      # once per run is enough
+                self._tray_hinted = True
+                self._tray.showMessage(
+                    "Lumea",
+                    "Still running in the tray. Quit from the tray menu.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2000,
+                )
             return
         self._closing = True
         self._shutdown()
@@ -2426,8 +2396,6 @@ class LedController(QWidget):
         # saved, launch always re-lit the USB devices, so keep that for upgraders.
         self._power_on = self._settings.value("power", True, type=bool)
         self._plugins_on = set(json.loads(self._settings.value("plugins_json", "[]")))
-        self._music_sensitivity = self._settings.value(
-            "music_sensitivity", music.DEFAULT_SENSITIVITY, type=int)
         mode = self._settings.value("theme_mode", "auto")
         self._theme_mode = mode if mode in THEME_MODES else "auto"
 
@@ -2444,5 +2412,4 @@ class LedController(QWidget):
         self._settings.setValue("effect_speed", self._effect_speed)
         self._settings.setValue("fx_speed", self._fx_speed)
         self._settings.setValue("plugins_json", json.dumps(sorted(self._plugins_on)))
-        self._settings.setValue("music_sensitivity", self._music_sensitivity)
         self._settings.setValue("theme_mode", self._theme_mode)

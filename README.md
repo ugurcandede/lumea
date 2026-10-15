@@ -80,7 +80,7 @@ and restored on launch, and dropped links auto-reconnect.
 - **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
 - **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
 - **Effects** — Rainbow, Breathe and Cycle on every device, with a speed control
-- **Music mode** *(Windows, optional)* — the lights follow whatever your PC is playing
+- **Music mode** *(plugin)* — the lights follow whatever your PC is playing, on Windows and macOS 13+
 - **Plugins** — optional add-ons, installed from Settings › Manage plugins, such as **Remote control** from your phone
 
 ## MSI motherboard RGB (optional · Windows)
@@ -106,17 +106,24 @@ The **Effect** chips under Brightness animate every device the picker drives: **
 colour wheel, **Breathe** fades the picked colour in and out, **Cycle** glides through your presets. **Speed** sets
 the pace. Only one effect or music mode runs at a time; Bluetooth strips get about 12 frames a second.
 
-## Music mode (optional · Windows)
+## Music mode (plugin)
 
-The **Music** chips under Brightness make the lights follow the system audio (WASAPI loopback via
-[`PyAudioWPatch`](https://pypi.org/project/PyAudioWPatch/) — no microphone, no virtual audio driver). Commands go to the
-same targets as the picker.
+Install **Music mode** from Settings › Manage plugins: a **Music** row appears under Effect and makes the lights
+follow the system audio — on Windows a WASAPI loopback via
+[`PyAudioWPatch`](https://pypi.org/project/PyAudioWPatch/), on macOS 13+ ScreenCaptureKit's audio capture; no
+microphone, no virtual audio driver. Commands go to the same targets as the picker.
+
+- **macOS asks for Screen & System Audio Recording** the first time a mode starts; allow Lumea, then relaunch it.
+  Running from source, the permission goes to whatever runs Python (your terminal or IDE).
 
 - **Pulse** — the picked color, brightness following the music.
 - **Spectrum** — bass drives red, mids green, treble blue.
 - **Beat** — steps through your presets on every beat.
 - **Flow** — the hue keeps turning, faster the louder the music.
-- **Sensitivity** — raise it for quiet tracks and soft beats, lower it if the lights jump around.
+- **Sensitivity** — how loud the music must be to light up fully. It doesn't adapt to the track: raise it for
+  quiet tracks, lower it if everything sits at full.
+- **Low / Mid / High** — turn a band down when it dominates (usually the bass). Spectrum's red, green and blue
+  follow them.
 - **Bluetooth strips may lag behind the music.** BLE only carries so many color updates a second, and fewer the more
   strips are connected; frames it can't keep up with are dropped. The USB devices (MSI, SteelSeries) follow closely.
 - Listens to the default output device at the moment a mode starts; after switching speakers or headphones, pick the

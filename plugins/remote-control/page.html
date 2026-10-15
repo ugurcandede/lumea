@@ -216,7 +216,12 @@
       </div>
       <div id="music-box">
         <div class="row"><h2>Music</h2><div class="chips" id="music"></div></div>
-        <div class="slider" id="sens-row" style="margin-top:8px"><label for="sens">Sensitivity</label><input type="range" id="sens" min="1" max="100"><output id="sens-v"></output></div>
+        <div id="music-tune" hidden>
+          <div class="slider" style="margin-top:8px"><label for="sens">Sensitivity</label><input type="range" id="sens" min="1" max="100"><output id="sens-v"></output></div>
+          <div class="slider" style="margin-top:8px"><label for="band-low">Low</label><input type="range" id="band-low" min="1" max="100"><output id="band-low-v"></output></div>
+          <div class="slider" style="margin-top:8px"><label for="band-mid">Mid</label><input type="range" id="band-mid" min="1" max="100"><output id="band-mid-v"></output></div>
+          <div class="slider" style="margin-top:8px"><label for="band-high">High</label><input type="range" id="band-high" min="1" max="100"><output id="band-high-v"></output></div>
+        </div>
       </div>
     </section>
 
@@ -394,7 +399,7 @@ function render() {
   const s = state;
   $("summary").textContent = s.summary;
   const p = $("power"); p.classList.toggle("on", s.power); p.querySelector("span").textContent = s.power ? "On" : "Off";
-  if (!s.effect && !s.music) $("preview").style.background = scaled(s.color, s.brightness);
+  if (!s.effect && !s.live) $("preview").style.background = scaled(s.color, s.brightness);
   $("preview").style.opacity = s.power ? 1 : 0.3;          // off: the colour is kept, not shown
 
   // colour: targets, wheel, presets, brightness, effects, music
@@ -405,7 +410,8 @@ function render() {
   $("editor").hidden = !s.editable; $("no-editor").hidden = s.editable;
   if (!busy.has("wheel")) wheel.setColor(s.color);
   else if (wasHidden) wheel.redraw();
-  const running = s.effect || s.music;                     // shown, not changed: the desktop app behaves the same
+  const music = s.plugins.music;                           // the Music plugin, while it's on
+  const running = s.effect || (music && music.mode);       // shown, not changed: the desktop app behaves the same
   const ignores = running && IGNORES_COLOR.includes(running);
   $("wheel").classList.toggle("muted", !!ignores);
   $("wheel-note").hidden = !ignores;
@@ -415,10 +421,13 @@ function render() {
   const fx = $("effects"); fx.replaceChildren(chip("Off", !s.effect, () => cmd("set_effect", null)));
   for (const e of s.effects) fx.append(chip(cap(e), s.effect === e, () => cmd("set_effect", e)));
   $("speed-row").hidden = !s.effect; slider("speed", s.effect_speed);
-  $("music-box").hidden = s.music_modes.length === 0;
-  const mu = $("music"); mu.replaceChildren(chip("Off", !s.music, () => cmd("set_music", null)));
-  for (const m of s.music_modes) mu.append(chip(cap(m), s.music === m, () => cmd("set_music", m)));
-  $("sens-row").hidden = !s.music; slider("sens", s.sensitivity);
+  $("music-box").hidden = !music;
+  if (music) {
+    const mu = $("music"); mu.replaceChildren(chip("Off", !music.mode, () => cmd("music.set_mode", null)));
+    for (const m of music.modes) mu.append(chip(cap(m), music.mode === m, () => cmd("music.set_mode", m)));
+    $("music-tune").hidden = !music.mode; slider("sens", music.sensitivity);
+    for (const b of ["low", "mid", "high"]) slider("band-" + b, music.bands[b]);
+  }
 
   // devices
   $("scan").disabled = s.scanning; $("scan").textContent = s.scanning ? "Scanning…" : "Scan";
@@ -507,7 +516,7 @@ function devices(s) {
     if (d.kind === "ble") row.append(iconBtn(penIcon, () => rename(d)), iconBtn(trashIcon, () => forget(d)));
     if (d.id === "msi-mystic-light" && s.msi_effect) {
       const mini = document.createElement("div"); mini.className = "mini";
-      for (const m of ["static", "rainbow"]) mini.append(chip(cap(m), s.msi_effect === m, () => cmd("set_msi_effect", m), !!(s.effect || s.music)));
+      for (const m of ["static", "rainbow"]) mini.append(chip(cap(m), s.msi_effect === m, () => cmd("set_msi_effect", m), !!(s.effect || s.live)));
       name.append(mini);
     }
     box.append(row);
@@ -596,14 +605,15 @@ const wheel = (() => {
 
 // ---------- controls ----------
 
-function bindSlider(id, name) {
-  const el = $(id), send = throttled(80, (v) => cmd(name, v));
+function bindSlider(id, name, ...pre) {
+  const el = $(id), send = throttled(80, (v) => cmd(name, ...pre, v));
   el.addEventListener("input", () => { busy.add(id); $(id + "-v").textContent = el.value + "%"; send(Number(el.value)); });
   el.addEventListener("change", () => setTimeout(() => busy.delete(id), 300));
 }
 bindSlider("brightness", "set_brightness");
 bindSlider("speed", "set_effect_speed");
-bindSlider("sens", "set_sensitivity");
+bindSlider("sens", "music.set_sensitivity");
+for (const b of ["low", "mid", "high"]) bindSlider("band-" + b, "music.set_band", b);
 
 $("power").onclick = () => state && cmd("set_power", !state.power);
 $("pc").onclick = () => { if ($("pc").classList.contains("switchable")) $("sheet").hidden = false; };

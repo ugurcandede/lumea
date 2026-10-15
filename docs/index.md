@@ -68,7 +68,7 @@ title: Home
     <div class="feature-card">
       <div class="icon">🎵</div>
       <h3>Music mode</h3>
-      <p>The lights follow whatever your PC is playing — Pulse, Spectrum, Beat or Flow. No microphone, no virtual driver. <em>Windows.</em></p>
+      <p>The lights follow whatever your PC is playing — Pulse, Spectrum, Beat or Flow. No microphone, no virtual driver. <em>Plugin.</em></p>
     </div>
     <div class="feature-card">
       <div class="icon">🖥️</div>

@@ -18,7 +18,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QSlider
 
 import effects
-import music
 import updates
 
 
@@ -26,7 +25,11 @@ import updates
 # existing plugin (a removed or renamed member, a changed meaning) bumps the major
 # and resets the minor. A plugin declares the version it was written against as
 # "api" in plugins/version.json; see plugin_host.compatible().
-API_VERSION = (1, 1)   # 1.1: theme, tray_color_icon, update in state(); their commands
+# 2.0: music mode became a plugin -- music_modes / music / sensitivity / bands and
+# set_music / set_sensitivity / set_band are gone. New: "live" and "plugins" in
+# state(), begin_live / live_frame / end_live, register / unregister / call, and
+# the optional Plugin.editor_widget() (a row under Effect, like settings_widget).
+API_VERSION = (2, 0)
 
 
 class LumeaAPI(QObject):
@@ -40,6 +43,7 @@ class LumeaAPI(QObject):
         self._notify_timer.setSingleShot(True)
         self._notify_timer.setInterval(0)          # coalesce a burst of changes into one signal
         self._notify_timer.timeout.connect(self.changed)
+        self._plugins = {}                         # name -> (state fn, {command: fn}), see register()
 
     def notify(self):
         """Called by the controller whenever state may have changed."""
@@ -71,9 +75,8 @@ class LumeaAPI(QObject):
             "effects": list(effects.MODES),
             "effect": c._fx.mode if c._fx is not None else None,
             "effect_speed": c._fx_speed,
-            "music_modes": list(music.MODES) if music.available() else [],
-            "music": c._music_mode,
-            "sensitivity": c._music_sensitivity,
+            "live": c._live_label,                   # what a plugin drives the lights with (begin_live), or None
+            "plugins": {name: state() for name, (state, _) in self._plugins.items()},   # see register()
             "msi_effect": c._msi_effect if c._msi is not None else None,
             "devices": devices,
             "scanning": not c._scan_btn.isEnabled(),
@@ -128,14 +131,6 @@ class LumeaAPI(QObject):
     def set_effect_speed(self, value):
         self._c._fx_speed_row.findChild(QSlider).setValue(int(value))
 
-    def set_music(self, mode):
-        if music.available() and (mode is None or mode in music.MODES):
-            self._c._set_music_mode(mode)
-
-    def set_sensitivity(self, value):
-        if music.available():
-            self._c._sensitivity_row.findChild(QSlider).setValue(int(value))
-
     def set_checked(self, device_id, on):
         """Tick a strip into the control group, or sync a USB device."""
         card = self._c._cards.get(device_id) or self._c._local_cards.get(device_id)
@@ -185,3 +180,50 @@ class LumeaAPI(QObject):
         release page in a browser, which a remote press shouldn't do on the PC."""
         if self._c._update is not None and updates.install_kind() is not None:
             self._c._start_update()
+
+    # ---- driving the lights (2.0) --------------------------------------------
+
+    def begin_live(self, label, status=None):
+        """Take the lights over, as an effect does: every live_frame() goes to the
+        picker's targets with the brightness applied, and the picker stands back.
+        ``label`` ("Music: Pulse") is what state()["live"] and the tray show. It
+        ends with end_live() -- or when an effect starts, the power goes off or
+        another plugin takes over: then state()["live"] no longer names ``label``
+        (watch `changed`), and the plugin should stop producing frames."""
+        c = self._c
+        c._stop_live()                              # one driver at a time
+        c._live_label = str(label)
+        c._start_live(status or f"{label}.")
+
+    def live_frame(self, rgb):
+        """One (r, g, b) frame, ignored unless begin_live() is in force."""
+        if self._c._live_label is not None:
+            self._c._drive(tuple(int(v) for v in rgb))
+
+    def end_live(self):
+        c = self._c
+        if c._live_label is not None:
+            c._stop_live()
+            c._color_timer.start()                  # hand every device back to the picker
+
+    # ---- a plugin's own state and commands (2.0) ------------------------------
+
+    def register(self, name, state, commands):
+        """Publish ``state()`` (a JSON-ready dict) as state()["plugins"][name] and
+        ``commands`` ({command: callable}) for call(): how other plugins -- the
+        remote control -- read and drive yours. Call notify() when the state moves."""
+        self._plugins[name] = (state, commands)
+        self.notify()
+
+    def unregister(self, name):
+        self._plugins.pop(name, None)
+        self.notify()
+
+    def call(self, plugin, command, args=()):
+        """Run a registered command; False if there is no such plugin or command.
+        The arguments come from whoever calls (a phone): the command checks them."""
+        entry = self._plugins.get(plugin)
+        if entry is None or command not in entry[1]:
+            return False
+        entry[1][command](*args)
+        return True

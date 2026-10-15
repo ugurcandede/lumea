@@ -175,6 +175,14 @@ QSlider#brightness::handle:horizontal {
 }
 QSlider#brightness::sub-page:horizontal:disabled { background: $disabled_bg; }
 QSlider#brightness::handle:horizontal:disabled { border-color: $disabled_bg; }
+QSlider#brightness::groove:vertical { width: 4px; border-radius: 2px; background: $inset; }
+/* Qt paints a vertical slider's sub-page above the handle: the fill (bottom = minimum) is the add-page. */
+QSlider#brightness::sub-page:vertical { width: 4px; border-radius: 2px; background: $inset; }
+QSlider#brightness::add-page:vertical { width: 4px; border-radius: 2px; background: $primary_bg; }
+QSlider#brightness::handle:vertical {
+    width: 14px; height: 14px; margin: 0 -5px; border-radius: 7px;
+    background: $handle; border: 2px solid $primary_bg;
+}
 
 /* Menus (tray, row context, effect picker) share the panel look. */
 QMenu { background-color: $panel; border: 1px solid $line; border-radius: 10px; padding: 6px; min-width: 190px; }

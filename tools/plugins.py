@@ -8,7 +8,10 @@ You edit name / description / version / api in version.json by hand; `index` fil
 in the rest. `check` (CI, on every change under plugins/) also enforces the rule
 that's easy to forget: a packaged Lumea only contains the modules its own code
 imports, so every module a plugin imports -- standard library included -- must be
-imported by Lumea itself or listed in plugin_runtime.py. See plugins/README.md.
+imported by Lumea itself or listed in plugin_runtime.py. An import under an
+`if sys.platform ...` test or a try/except ImportError is still checked that way,
+but left out of "requires": the plugin needs it only where it exists. See
+plugins/README.md.
 """
 
 import ast
@@ -24,17 +27,38 @@ RUNTIME = ROOT / "plugin_runtime.py"
 HAND_FIELDS = ("name", "description", "version", "api")
 
 
-def imports_of(path):
-    """Absolute module names a .py file imports (relative imports skipped)."""
+def imports_of(path, conditional=False):
+    """Absolute module names a .py file imports (relative imports skipped): the
+    unconditional ones, or with ``conditional`` only those under an `if
+    sys.platform ...` test or a try/except ImportError."""
     found = set()
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path))):
-        if isinstance(node, ast.Import):
-            found.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            found.add(node.module)
-            if node.module == "PySide6":            # from PySide6 import QtX -> PySide6.QtX
-                found.update(f"PySide6.{a.name}" for a in node.names)
+    _collect(ast.parse(path.read_text(encoding="utf-8"), str(path)), False, conditional, found)
     return found
+
+
+def _collect(node, guarded, want, found):
+    for child in ast.iter_child_nodes(node):
+        inner = guarded or _guards(child)
+        if inner == want:
+            if isinstance(child, ast.Import):
+                found.update(alias.name for alias in child.names)
+            elif isinstance(child, ast.ImportFrom) and child.level == 0 and child.module:
+                found.add(child.module)
+                if child.module == "PySide6":       # from PySide6 import QtX -> PySide6.QtX
+                    found.update(f"PySide6.{a.name}" for a in child.names)
+        _collect(child, inner, want, found)
+
+
+def _guards(node):
+    """True for `if sys.platform ...` (its elif / else too) and try/except ImportError."""
+    if isinstance(node, ast.If):
+        return "sys.platform" in ast.unparse(node.test)
+    return isinstance(node, ast.Try) and any(
+        h.type is not None and "ImportError" in ast.unparse(h.type) for h in node.handlers)
+
+
+def all_imports_of(path):
+    return imports_of(path) | imports_of(path, conditional=True)
 
 
 def lumea_modules():
@@ -42,9 +66,9 @@ def lumea_modules():
     core = set()
     for path in ROOT.glob("*.py"):
         if path != RUNTIME:
-            core |= imports_of(path)
+            core |= all_imports_of(path)
             core.add(path.stem)                     # Lumea's own modules (plugin_api, effects, ...)
-    return core, imports_of(RUNTIME) - core
+    return core, all_imports_of(RUNTIME) - core
 
 
 def plugin_dirs():
@@ -81,14 +105,15 @@ def computed(folder, core, runtime):
     for path in folder.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
-        for module in imports_of(path):
+        always = imports_of(path)
+        for module in all_imports_of(path):
             if covered(module, core):
                 continue
-            if covered(module, runtime):
-                needs.add(module)
-            else:
+            if not covered(module, runtime):
                 problems.append(f"{folder.name}/{path.relative_to(folder).as_posix()} imports {module!r}, "
                                 "which Lumea doesn't bundle: add it to plugin_runtime.py (needs an app release)")
+            elif module in always:                  # a platform-conditional one isn't required everywhere
+                needs.add(module)
     return files, sorted(needs), problems
 
 

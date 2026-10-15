@@ -47,11 +47,12 @@ confirmed on real hardware, so Lumea doesn't send them — a guessed command
 does nothing at best. Brightness dims the colour instead, and the effects
 (Rainbow, Breathe, Cycle) are animated by Lumea itself.
 
-## Is music mode coming to macOS?
+## Does music mode work on macOS?
 
-It needs a loopback of the system audio, which Windows provides out of the box
-and macOS does not without a virtual audio driver. For now it is Windows-only,
-as are the MSI and SteelSeries devices.
+Yes, on macOS 13 and later: the Music mode plugin captures the system audio
+through ScreenCaptureKit, so no virtual audio driver. macOS asks for the Screen &
+System Audio Recording permission the first time; allow Lumea and relaunch it.
+The MSI and SteelSeries devices remain Windows-only.
 
 ## Does Lumea collect any data?
 

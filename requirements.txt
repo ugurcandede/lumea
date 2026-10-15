@@ -2,6 +2,7 @@ PySide6>=6.6
 qasync>=0.27
 bleak>=0.21
 hidapi>=0.14 ; sys_platform == "win32"  # MSI Mystic Light motherboard sync (optional)
-PyAudioWPatch>=0.2.12 ; sys_platform == "win32"  # music mode: WASAPI loopback (optional)
-numpy>=1.26 ; sys_platform == "win32"  # music mode analysis (optional)
+PyAudioWPatch>=0.2.12 ; sys_platform == "win32"  # Music plugin: WASAPI loopback (see plugin_runtime.py)
+pyobjc-framework-ScreenCaptureKit>=10.0 ; sys_platform == "darwin"  # Music plugin: system audio capture
+numpy>=1.26 ; sys_platform == "win32" or sys_platform == "darwin"  # Music plugin: analysis
 segno>=1.6  # QR codes for plugins (see plugin_runtime.py)
