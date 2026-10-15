@@ -12,7 +12,7 @@ import sys
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QPushButton, QVBoxLayout
 
 from . import capture, engine
 from .row import Row
@@ -24,11 +24,9 @@ _SETTINGS = "plugin_music"
 _PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 # Shown once on macOS before the system asks: the permission sounds like more than
 # the plugin uses, so say what it is for and what it isn't.
-_WHY = ("macOS lets an app hear the system audio only through its Screen & System Audio Recording "
-        "permission: there is no audio-only switch, and the microphone isn't part of it.\n\n"
-        "Lumea uses it to listen to what's playing, nothing else. The screen isn't looked at, "
-        "recorded or sent anywhere.\n\n"
-        "macOS asks next. Allow Lumea, then relaunch it.")
+_WHY = ("macOS lets apps hear system audio only through Screen & System Audio Recording. "
+        "Lumea reads the audio — never the screen or the microphone.\n\n"
+        "After allowing, relaunch Lumea.")
 
 
 class Plugin:
@@ -113,14 +111,52 @@ class Plugin:
             self._refresh()
 
     def _explain(self, mode):
-        """macOS, once: _WHY, before the system's own prompt. Continue starts ``mode``."""
-        box = QMessageBox(QMessageBox.Icon.Information, "Music mode needs a permission", _WHY,
-                          QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, self._row)
-        box.button(QMessageBox.StandardButton.Ok).setText("Continue")
-        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        """macOS, once: _WHY, before the system's own prompt. Allow starts ``mode``.
+        A frameless panel like the app's own window rather than a QMessageBox, whose
+        native frame and system icon clash with it; it reuses the app's object names
+        because a plugin can't add to the stylesheet."""
+        box = QDialog(self._row.window(), Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        box.setObjectName("window")          # transparent, so the panel's rounded corners show
+        box.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        panel = QFrame()
+        panel.setObjectName("panel")
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        outer.addWidget(panel)
 
-        def done():
-            if box.standardButton(box.clickedButton()) == QMessageBox.StandardButton.Ok:
+        title = QLabel("Allow system audio")
+        title.setObjectName("appName")
+        body = QLabel(_WHY)
+        body.setObjectName("statusText")
+        body.setWordWrap(True)
+        body.setFixedWidth(280)              # a fixed width lets the wrapped text size its height
+        later = QPushButton("Not now")
+        later.setObjectName("ghost")
+        later.clicked.connect(box.reject)
+        allow = QPushButton("Allow")
+        allow.setObjectName("primary")
+        allow.setDefault(True)
+        allow.clicked.connect(box.accept)
+        for btn in (later, allow):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)   # macOS draws a focused QSS button blank
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
+        buttons.addStretch()
+        buttons.addWidget(later)
+        buttons.addWidget(allow)
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(18, 16, 18, 16)
+        lay.setSpacing(8)
+        lay.addWidget(title)
+        lay.addWidget(body)
+        lay.addSpacing(6)
+        lay.addLayout(buttons)
+
+        def done(result):
+            if result == QDialog.DialogCode.Accepted:
                 QSettings().setValue(f"{_SETTINGS}/explained", True)
                 self.set_mode(mode)
             else:
