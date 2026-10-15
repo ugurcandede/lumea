@@ -89,7 +89,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt nuitka ordered-set zstandard
+          # Nuitka 4.3 builds an app that segfaults at startup (Nuitka_Function_New); 4.2.2 is known-good.
+          pip install -r requirements.txt nuitka==4.2.2 ordered-set zstandard
           # Nuitka uses ccache on macOS only if it's installed.
           if [ "$RUNNER_OS" = "macOS" ]; then brew install ccache; fi
 
