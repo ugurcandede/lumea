@@ -59,7 +59,8 @@ Install **Music mode** from Settings › Manage plugins; its **Music** chips
 appear under Effect and make the lights follow the system audio — a loopback of
 what your PC is playing, so no microphone and no virtual audio driver. On
 macOS (13+) allow Lumea under Screen & System Audio Recording when asked, then
-relaunch it.
+relaunch it: macOS has no audio-only permission, and Lumea reads the audio
+alone, never the screen.
 
 | Mode | What it does |
 |---|---|

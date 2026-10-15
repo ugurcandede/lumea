@@ -114,6 +114,8 @@ follow the system audio — on Windows a WASAPI loopback via
 microphone, no virtual audio driver. Commands go to the same targets as the picker.
 
 - **macOS asks for Screen & System Audio Recording** the first time a mode starts; allow Lumea, then relaunch it.
+  That is the only way macOS lets an app hear the system audio — there is no audio-only permission, and the
+  microphone isn't part of it. Lumea reads the audio alone; the screen isn't looked at, recorded or sent anywhere.
   Running from source, the permission goes to whatever runs Python (your terminal or IDE).
 
 - **Pulse** — the picked color, brightness following the music.

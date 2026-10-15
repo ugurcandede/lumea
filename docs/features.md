@@ -94,7 +94,8 @@ the colour being sent right now. Bluetooth strips get about 12 frames a second.
 A plugin (Settings › Manage plugins) that makes the lights follow whatever your
 PC is playing — a loopback of the system audio, so **no microphone** and **no
 virtual audio driver**. macOS (13+) asks for the Screen & System Audio Recording
-permission the first time.
+permission the first time: the only way it lets an app hear the system audio.
+Lumea reads the audio alone, never the screen or the microphone.
 
 | Mode | What it does |
 |---|---|

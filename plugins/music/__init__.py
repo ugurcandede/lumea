@@ -8,9 +8,11 @@ as the app's effects. Read plugins/README.md for the plugin contract.
 
 import json
 import logging
+import sys
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtWidgets import QMessageBox
 
 from . import capture, engine
 from .row import Row
@@ -20,6 +22,13 @@ log = logging.getLogger(__name__)
 INTERVAL_MS = 33            # ~30 colour frames/s; slower links get the newest frame
 _SETTINGS = "plugin_music"
 _PRIVACY_PANE = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+# Shown once on macOS before the system asks: the permission sounds like more than
+# the plugin uses, so say what it is for and what it isn't.
+_WHY = ("macOS lets an app hear the system audio only through its Screen & System Audio Recording "
+        "permission: there is no audio-only switch, and the microphone isn't part of it.\n\n"
+        "Lumea uses it to listen to what's playing, nothing else. The screen isn't looked at, "
+        "recorded or sent anywhere.\n\n"
+        "macOS asks next. Allow Lumea, then relaunch it.")
 
 
 class Plugin:
@@ -71,6 +80,9 @@ class Plugin:
         if mode not in engine.MODES:
             return
         if self._capture is None:
+            if sys.platform == "darwin" and not QSettings().value(f"{_SETTINGS}/explained", False, type=bool):
+                self._explain(mode)          # says why first; Continue comes back here
+                return
             try:
                 self._capture = capture.open_capture()
             except capture.CaptureError as e:
@@ -99,6 +111,23 @@ class Plugin:
                 self._engine.bands[i] = value
             QSettings().setValue(f"{_SETTINGS}/bands_json", json.dumps(self.bands))
             self._refresh()
+
+    def _explain(self, mode):
+        """macOS, once: _WHY, before the system's own prompt. Continue starts ``mode``."""
+        box = QMessageBox(QMessageBox.Icon.Information, "Music mode needs a permission", _WHY,
+                          QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel, self._row)
+        box.button(QMessageBox.StandardButton.Ok).setText("Continue")
+        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+
+        def done():
+            if box.standardButton(box.clickedButton()) == QMessageBox.StandardButton.Ok:
+                QSettings().setValue(f"{_SETTINGS}/explained", True)
+                self.set_mode(mode)
+            else:
+                self._refresh()              # drop the clicked chip's check
+
+        box.finished.connect(done)
+        box.open()
 
     # ---- running ---------------------------------------------------------------
 

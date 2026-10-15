@@ -54,6 +54,13 @@ through ScreenCaptureKit, so no virtual audio driver. macOS asks for the Screen 
 System Audio Recording permission the first time; allow Lumea and relaunch it.
 The MSI and SteelSeries devices remain Windows-only.
 
+## Why does music mode want to record my screen?
+
+Because macOS has no audio-only permission: Screen & System Audio Recording is
+the one way an app can hear what the system plays, and it covers the screen as
+well. Lumea reads the audio alone — the screen isn't looked at, recorded or sent
+anywhere, and the microphone isn't involved.
+
 ## Does Lumea collect any data?
 
 Once a day it sends an anonymous ping to Google Analytics: a random install id
