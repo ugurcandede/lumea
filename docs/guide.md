@@ -53,10 +53,14 @@ The **Effect** chips under Brightness animate every device the picker drives:
 **Speed** sets the pace. Only one effect or music mode runs at a time.
 Bluetooth strips get about 12 frames a second.
 
-## Music mode <small>(Windows)</small>
+## Music mode
 
-The **Music** chips make the lights follow the system audio — a loopback of
-what your PC is playing, so no microphone and no virtual audio driver.
+Install **Music mode** from Settings › Manage plugins; its **Music** chips
+appear under Effect and make the lights follow the system audio — a loopback of
+what your PC is playing, so no microphone and no virtual audio driver. On
+macOS (13+) allow Lumea under Screen & System Audio Recording when asked, then
+relaunch it: macOS has no audio-only permission, and Lumea reads the audio
+alone, never the screen.
 
 | Mode | What it does |
 |---|---|
@@ -65,8 +69,9 @@ what your PC is playing, so no microphone and no virtual audio driver.
 | **Beat** | steps through your presets on every beat |
 | **Flow** | the hue keeps turning, faster the louder the music |
 
-**Sensitivity** — raise it for quiet tracks, lower it if the lights jump
-around.
+**Sensitivity** — how loud the music must be to light up fully: raise it for
+quiet tracks, lower it if everything sits at full. **Low / Mid / High** turn
+down a band that dominates, usually the bass.
 
 Bluetooth strips may lag behind the music: BLE only carries so many updates a
 second, and fewer the more strips are connected, so frames it can't keep up

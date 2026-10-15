@@ -21,7 +21,8 @@ Protocol (JSON text frames on the WebSocket):
                        {"type": "error", "message": "..."}      a command was refused
 
 Nothing but "hello" / "pair" is accepted before a socket is paired. Commands are
-an explicit allow-list of LumeaAPI methods with checked argument types.
+an explicit allow-list of LumeaAPI methods with checked argument types, or
+"<plugin>.<command>" for what another plugin registered (state()["plugins"]).
 """
 
 import json
@@ -52,8 +53,6 @@ COMMANDS = {
     "set_target": ((str, _NONE),),
     "set_effect": ((str, _NONE),),
     "set_effect_speed": ((int,),),
-    "set_music": ((str, _NONE),),
-    "set_sensitivity": ((int,),),
     "set_checked": ((str,), (bool,)),
     "scan": (),
     "link": (),
@@ -201,6 +200,18 @@ class Server(QObject):
         sock.close()
 
     def _run(self, sock, name, args):
+        if isinstance(name, str) and "." in name:
+            # "<plugin>.<command>": a command another plugin registered (API 2.0);
+            # that plugin checks the arguments itself.
+            plugin, command = name.split(".", 1)
+            try:
+                ok = isinstance(args, list) and self._api.call(plugin, command, args)
+            except Exception as e:
+                log.exception("remote command %s failed", name)
+                return self._send(sock, {"type": "error", "message": str(e)})
+            if not ok:
+                self._send(sock, {"type": "error", "message": f"Unknown command {name!r}."})
+            return
         spec = COMMANDS.get(name)
         if spec is None or not isinstance(args, list) or len(args) != len(spec) or not all(
                 isinstance(a, t) and not (isinstance(a, bool) and bool not in t) for a, t in zip(args, spec)):

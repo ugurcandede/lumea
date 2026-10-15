@@ -25,7 +25,7 @@ class Panel(QWidget):
 
     def refresh(self):
         s = self.api.state()
-        live = s["effect"] or (f"music: {s['music']}" if s["music"] else None)
+        live = s["effect"] or s["live"]
         self.text.setText(f"{'On' if s['power'] else 'Off'} · {s['color']} · {s['brightness']}%"
                           + (f" · {live}" if live else ""))
         if not live:

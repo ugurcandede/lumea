@@ -89,10 +89,13 @@ the colour being sent right now. Bluetooth strips get about 12 frames a second.
 <div class="feature-row feature-row--text">
 <div markdown="1">
 
-## Music mode <span class="platform">Windows</span>
+## Music mode
 
-The lights follow whatever your PC is playing — a loopback of the system audio,
-so **no microphone** and **no virtual audio driver**.
+A plugin (Settings › Manage plugins) that makes the lights follow whatever your
+PC is playing — a loopback of the system audio, so **no microphone** and **no
+virtual audio driver**. macOS (13+) asks for the Screen & System Audio Recording
+permission the first time: the only way it lets an app hear the system audio.
+Lumea reads the audio alone, never the screen or the microphone.
 
 | Mode | What it does |
 |---|---|
@@ -101,7 +104,8 @@ so **no microphone** and **no virtual audio driver**.
 | **Beat** | steps through your presets on every beat |
 | **Flow** | the hue keeps turning, faster the louder it gets |
 
-**Sensitivity** tunes it for quiet tracks or busy ones. USB devices follow
+**Sensitivity** sets how loud the music must be to light up fully, and
+**Low / Mid / High** turn down a band that dominates. USB devices follow
 closely; Bluetooth strips can lag a little, since BLE only carries so many
 updates a second.
 

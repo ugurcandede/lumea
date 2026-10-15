@@ -37,6 +37,10 @@ So a plugin can import only modules that are either
   the build bundles them.
 
 Anything else fails with `ModuleNotFoundError` on users' machines, even though it works in a source run.
+
+A library that exists on one platform only (`pyaudiowpatch` on Windows, `ScreenCaptureKit` on macOS) is imported
+under `if sys.platform == ...` — in `plugin_runtime.py` and in the plugin alike. `check` still verifies it is
+bundled, but leaves it out of `requires`, which every platform checks before installing.
 Adding a module to `plugin_runtime.py` changes the app, so it takes **a Lumea release** before any plugin can
 rely on it — do that first, plugin second.
 
@@ -73,10 +77,19 @@ class Plugin:
                                       # It gets the page's width (~370 px) and is squeezed if it wants more;
                                       # don't force a width with setMinimumWidth, Qt would honour that and
                                       # clip the panel.
+
+    def editor_widget(self):          # optional: a QWidget shown in the editor, under Effect. Asked once per
+        ...                           # start and removed when the plugin stops (the Music plugin's row).
 ```
 
 - Talk to the app **only** through `api` (`plugin_api.py`): `state()`, the `changed` / `frame` signals and the
   command methods. Don't import `ui`.
+- To drive the lights like an effect: `api.begin_live(label)`, then `api.live_frame((r, g, b))` per tick,
+  `api.end_live()` to stop. `state()["live"]` names the driver; when it no longer names yours, the app ended the
+  session (an effect started, the power went off) and you stop producing frames.
+- To let other plugins — the remote control — see and drive yours: `api.register(name, state_fn, {command: fn})`.
+  It shows as `state()["plugins"][name]` and runs through `api.call(name, command, args)`; the command checks
+  its arguments, they come from a phone.
 - Everything runs on the app's single event loop: no threads, no blocking calls. Use Qt (`QTimer`,
   `QNetworkAccessManager`, `QTcpServer`, …) or `async` code.
 - Import your own modules relatively (`from . import page`); read your own files relative to `__file__`.
