@@ -18,7 +18,7 @@ by hand: `brew upgrade --cask lumea`.
 
 ## Direct download
 
-<div class="btn-row" style="justify-content:flex-start;margin-bottom:24px">
+<div class="btn-row btn-row--left">
   <a class="btn btn-accent" href="https://github.com/ugurcandede/Lumea/releases/latest/download/Lumea-windows.exe">Download for Windows</a>
   <a class="btn btn-accent" href="https://github.com/ugurcandede/Lumea/releases/latest/download/Lumea-macos-arm64.zip">Download for macOS</a>
   <a class="btn btn-ghost" href="https://github.com/ugurcandede/Lumea/releases/latest">All releases</a>

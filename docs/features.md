@@ -152,7 +152,7 @@ music, the device list and the settings are all there.
 - The **port** is yours to change if something else uses it.
 
 </div>
-<div class="shot"><img src="{{ site.baseurl }}/assets/images/remote.png" alt="Remote control page on a phone" style="max-width:280px"></div>
+<div class="shot"><img src="{{ site.baseurl }}/assets/images/remote.png" alt="Remote control page on a phone"></div>
 </div>
 
 <div class="feature-row feature-row--flip">
@@ -205,8 +205,8 @@ for the contract; **Random color** is the small example.
 
 </div>
 <div class="shot">
-  <img src="{{ site.baseurl }}/assets/images/settings-dark.png" alt="Settings, dark theme" style="max-width:300px">
-  <img src="{{ site.baseurl }}/assets/images/tray.png" alt="Tray menu" style="max-width:220px;margin-top:16px">
+  <img src="{{ site.baseurl }}/assets/images/settings-dark.png" alt="Settings, dark theme">
+  <img src="{{ site.baseurl }}/assets/images/tray.png" alt="Tray menu" class="shot-sm">
 </div>
 </div>
 

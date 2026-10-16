@@ -15,23 +15,13 @@ presets, effects and a system tray. Plugins add your PC's RGB, music mode and a 
 
 </div>
 
-## Quick start
+## Requirements
 
-```bash
-pip install -r requirements.txt
-python main.py
-```
-
-> If `pip install` fails on the newest Python, use a 3.11–3.13 interpreter (PySide6 wheels can lag).
-
-> **macOS, running from source:** Bluetooth access requires an `NSBluetoothAlwaysUsageDescription` entry in the
-> *interpreter's* app bundle (the packaged app ships with it). Without it macOS terminates the process on the first
-> scan, so Lumea refuses to scan and shows the one-time fix in its status line, e.g. for python.org's 3.13:
->
-> ```bash
-> plutil -insert NSBluetoothAlwaysUsageDescription -string "Lumea controls Bluetooth LED strips." \
->   /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/Info.plist
-> ```
+- Windows, or macOS on Apple Silicon
+- Bluetooth turned on
+- A strip advertising as `ELK-BLE`, `MELK`, or `ELK-BULB`
+- *(optional, PC RGB)* an MSI board with a Mystic Light USB controller, a SteelSeries Apex 3 keyboard and/or a Rival 650
+  mouse — driven by the MSI / SteelSeries plugins via `hidapi` (Windows only)
 
 ## Install
 
@@ -48,19 +38,33 @@ The cask clears Gatekeeper for you. To update later: `brew upgrade --cask lumea`
 
 Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/latest) and run it. On the SmartScreen prompt, choose **More info → Run anyway**.
 
-## Prerequisites
+### Run from source
 
-- Python 3.11+
-- A strip advertising as `ELK-BLE`, `MELK`, or `ELK-BULB`
-- Bluetooth turned on
-- *(optional, PC RGB)* an MSI board with a Mystic Light USB controller, a SteelSeries Apex 3 keyboard and/or a Rival 650 mouse — driven by the MSI / SteelSeries plugins via `hidapi` (installed on Windows by `requirements.txt`)
+Python 3.11 or later:
+
+```bash
+pip install -r requirements.txt
+python main.py
+```
+
+> If `pip install` can't find a PySide6 wheel for the newest Python, use a 3.11–3.13 interpreter.
+
+> **macOS, running from source:** Bluetooth access requires an `NSBluetoothAlwaysUsageDescription` entry in the
+> *interpreter's* app bundle (the packaged app ships with it). Without it macOS terminates the process on the first
+> scan, so Lumea refuses to scan and shows the one-time fix in its status line, e.g. for python.org's 3.13:
+>
+> ```bash
+> plutil -insert NSBluetoothAlwaysUsageDescription -string "Lumea controls Bluetooth LED strips." \
+>   /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/Info.plist
+> ```
 
 ## Usage
 
 1. **Scan** — lists nearby strips.
-2. **Tick** the strips you want, then press **Connect**. Double-click a row to set an **alias**.
-3. Pick the target with the **Editing** chips — **All** ticked strips, or any you pick — then use the **color picker**,
-   **brightness** and **power**; commands go to every connected target at once.
+2. **Tick** the strips you want, then press **Connect**. Double-click a row to set an **alias**; the bin icon (or a
+   right-click) forgets a saved strip.
+3. Pick the target with the **Editing** chips — **All** ticked strips, or any you pick — then use the **color picker**
+   (or type a hex colour), **brightness** and **power**; commands go to every connected target at once.
 4. **Presets** — the 12 dots: left-click applies, right-click saves the current color.
 5. **Disconnect** (the same button, once everything ticked is linked) drops every connection.
 6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, usage stats,
@@ -106,8 +110,9 @@ If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea
 ## Effects
 
 The **Effect** chips under Brightness animate every device the picker drives: **Rainbow** turns through the
-colour wheel, **Breathe** fades the picked colour in and out, **Cycle** glides through your presets. **Speed** sets
-the pace. Only one effect or music mode runs at a time; Bluetooth strips get about 12 frames a second.
+colour wheel, starting from your colour, **Breathe** fades the picked colour in and out, **Cycle** glides through your
+presets. **Speed** sets the pace. Only one effect or music mode runs at a time; Bluetooth strips get about 12 frames a
+second.
 
 ## Music mode (plugin)
 
@@ -137,13 +142,15 @@ microphone, no virtual audio driver. Commands go to the same targets as the pick
 ## Plugins
 
 Settings › **Manage plugins** lists optional add-ons; install one and switch it on. They update on their own, without a
-new Lumea release (see [plugins/README.md](plugins/README.md) for how they work and how to write one). **Random color**
-is the small example to start from.
+new Lumea release (see [plugins/README.md](plugins/README.md) for how they work and how to
+write one). **Random color** is the small example to start from.
 
 **Remote control** drives Lumea from a phone, tablet or another computer's browser on the same network: colour,
 brightness, presets, effects and music, the strips and devices, and the app's settings. Switch it on, then scan the
-QR shown under it (or open the address and enter the PIN). Windows asks once to let Lumea through the firewall: allow
-it on private networks. If several PCs run it, the page lists them and switches between them; each pairs on its own.
+QR shown under it (or open the address and enter the 6-digit PIN; five wrong PINs lock the sender out for a minute).
+Windows asks once to let Lumea through the firewall: allow it on private networks. If several PCs run it, the page
+lists them and switches between them; each pairs on its own. **Reset pairings** draws a new PIN and forgets every
+paired browser, and the port can be changed if something else uses it.
 
 ## Privacy
 
@@ -169,6 +176,7 @@ plugin_host.py     downloads, loads and runs plugins
 plugin_runtime.py  libraries bundled for plugins (hidapi, numpy, …)
 plugins/           the plugins: msi, steelseries, music, remote-control, random_color (see plugins/README.md)
 tools/plugins.py   maintains and checks plugins/version.json
+docs/              the website (GitHub Pages): landing page, features, guide, FAQ, download
 ```
 
 ---
