@@ -27,6 +27,7 @@ def _bundle():
     import numpy                    # noqa: F401  (music: analysis)
     if sys.platform == "win32":
         import pyaudiowpatch        # noqa: F401  (music: WASAPI loopback)
+        import hid                  # noqa: F401  hidapi (msi, steelseries: USB HID devices)
     elif sys.platform == "darwin":  # (music: ScreenCaptureKit through pyobjc, which bleak brings in)
         import objc                 # noqa: F401
         import CoreMedia            # noqa: F401

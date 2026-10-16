@@ -53,14 +53,13 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
 - Python 3.11+
 - A strip advertising as `ELK-BLE`, `MELK`, or `ELK-BULB`
 - Bluetooth turned on
-- *(optional, MSI motherboard RGB)* an MSI board with a Mystic Light USB controller — driven via `hidapi` (installed on Windows by `requirements.txt`)
-- *(optional, SteelSeries RGB)* a SteelSeries Apex 3 keyboard and/or Rival 650 mouse — same driverless `hidapi` path
+- *(optional, PC RGB)* an MSI board with a Mystic Light USB controller, a SteelSeries Apex 3 keyboard and/or a Rival 650 mouse — driven by the MSI / SteelSeries plugins via `hidapi` (installed on Windows by `requirements.txt`)
 
 ## Usage
 
 1. **Scan** — lists nearby strips.
 2. **Tick** the strips you want, then press **Connect**. Double-click a row to set an **alias**.
-3. Pick the target with the **Editing** chips — **All** ticked strips, or one strip — then use the **color picker**,
+3. Pick the target with the **Editing** chips — **All** ticked strips, or any you pick — then use the **color picker**,
    **brightness** and **power**; commands go to every connected target at once.
 4. **Presets** — the 12 dots: left-click applies, right-click saves the current color.
 5. **Disconnect** (the same button, once everything ticked is linked) drops every connection.
@@ -77,27 +76,27 @@ and restored on launch, and dropped links auto-reconnect.
 - **System tray** — runs in the background; quick colours, power and settings from the menu, icon can reflect the current color
 - **Light / dark theme**, following the system or fixed
 - Settings persistence and auto-reconnect
-- **MSI motherboard RGB** *(Windows, optional)* — mirror the color to a Mystic Light controller, driverless
-- **SteelSeries RGB** *(Windows, optional)* — mirror the color to an Apex 3 keyboard and/or Rival 650 mouse, driverless
+- **MSI motherboard RGB** *(Windows, plugin)* — a Mystic Light controller as a device in the list, driverless
+- **SteelSeries RGB** *(Windows, plugin)* — an Apex 3 keyboard and/or Rival 650 mouse as devices in the list, driverless
 - **Effects** — Rainbow, Breathe and Cycle on every device, with a speed control
 - **Music mode** *(plugin)* — the lights follow whatever your PC is playing, on Windows and macOS 13+
 - **Plugins** — optional add-ons, installed from Settings › Manage plugins, such as **Remote control** from your phone
 
-## MSI motherboard RGB (optional · Windows)
+## MSI motherboard RGB (plugin · Windows)
 
-If your PC is an MSI board with a **Mystic Light** USB controller, Lumea can control its RGB too — no MSI Center, no kernel driver. The controller appears in the device list as **MSI Mystic Light** (always "Connected"); tick it to mirror the color picker to the motherboard and any RGB/ARGB headers, alongside your BLE strips.
+If your PC is an MSI board with a **Mystic Light** USB controller, Lumea can control its RGB too — no MSI Center, no kernel driver. Install **MSI Mystic Light** from Settings › Manage plugins: the controller appears in the device list as **MSI Mystic Light** (always "Connected"). Tick it to make it part of **All**, or click its row to edit it on its own — colour, brightness, power and effects, like a strip.
 
-- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/) (an optional dependency, Windows only).
-- **Static color only.** Lumea never sends firmware effect/mode bytes — those are undocumented and have bricked some boards. Writes are volatile, so a reboot restores your BIOS lighting.
+- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/) (Windows only).
+- **Static color only.** Lumea never sends firmware effect/mode bytes — those are undocumented and have bricked some boards. Writes are volatile, so a reboot restores your BIOS lighting. Lumea's own effects stream static colours, so they work on it too.
 - **Case fans:** if they run off a case controller (e.g. MSI Gungnir), set that controller to **motherboard control** (JARGB) mode so they follow Lumea.
 - Verified on an **MSI MPG Z790 CARBON WIFI**. Same-variant Mystic Light USB boards should work; anything else is detected and left untouched.
 
-## SteelSeries RGB (optional · Windows)
+## SteelSeries RGB (plugin · Windows)
 
-If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea can drive its lighting too — no SteelSeries GG, no driver. Each appears as its own device row (**SteelSeries Apex 3** / **SteelSeries Rival 650**, always "Connected"); tick it to mirror the color picker to that device.
+If a SteelSeries **Apex 3** keyboard or **Rival 650** mouse is plugged in, Lumea can drive its lighting too — no SteelSeries GG, no driver. Install **SteelSeries** from Settings › Manage plugins: each appears as its own device row (**SteelSeries Apex 3** / **SteelSeries Rival 650**, always "Connected"). Tick it to make it part of **All**, or click its row to edit it on its own.
 
-- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/), the same optional dependency as the MSI path.
-- **Static color only**, following the picker. No brick risk (plain HID output reports; nothing is written to onboard flash).
+- **Driverless** — pure USB HID via [`hidapi`](https://pypi.org/project/hidapi/), like the MSI plugin.
+- **Static color only**, following the picker and Lumea's effects. No brick risk (plain HID output reports; nothing is written to onboard flash).
 - Verified on an **Apex 3** and a **Rival 650**. Other SteelSeries models are detected and left alone.
 
 ## Effects
@@ -153,14 +152,12 @@ settings.
 main.py          entry point: QApplication + qasync event loop
 analytics.py     one anonymous daily ping (opt-out in Settings)
 ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
-msi_mystic.py    optional MSI Mystic Light (USB HID) backend
-steelseries.py   optional SteelSeries Apex 3 / Rival 650 (USB HID) backend
 effects.py       Rainbow / Breathe / Cycle colour maths
-music.py         optional music mode: system-audio loopback + analysis
 ui.py            LedController: device list, color, presets, system tray
 colorpicker.py   embedded SV-square + hue-bar color picker
 icon.py          app icon + dynamic tray icon
 protocol.py      pure command encoders
+plugins/         optional add-ons: music, msi, steelseries, remote-control (see plugins/README.md)
 ```
 
 ---

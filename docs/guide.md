@@ -20,13 +20,15 @@ drops every connection.
 Ticked strips, aliases, presets and each strip's last colour are saved, so the
 next launch picks up where you left off — you only scan and connect again.
 
-## Editing one strip or all of them
+## Editing one strip, a few, or all of them
 
 The **Editing** chips choose what the picker drives:
 
 - **All** — every ticked strip gets the same colour, brightness and power.
 - **A single strip** — click its chip to edit it on its own. Its own last
   colour loads into the picker.
+- **A few** — click more chips; they get what you pick next. The row scrolls
+  sideways when the chips outgrow it.
 
 The strips never report their state back, so what Lumea shows is the last
 command it sent. Each strip remembers its own.
@@ -80,9 +82,10 @@ when it starts; after switching speakers or headphones, pick the mode again.
 
 ## PC RGB <small>(Windows)</small>
 
-Supported USB devices show up in the device list on their own, always
-*Connected*. Tick one to mirror the picker's colour to it, alongside your
-strips. Both paths are driverless — no MSI Center, no SteelSeries GG.
+Install the **MSI Mystic Light** or **SteelSeries** plugin (Settings › Manage
+plugins) and the device shows up in the list, always *Connected*. Tick it to
+make it part of **All**, or click its row (or its **Editing** chip) to edit it
+alone, like a strip. Both are driverless — no MSI Center, no SteelSeries GG.
 
 **MSI Mystic Light** — the motherboard and its RGB/ARGB headers. Static colour
 only: Lumea never sends firmware effect bytes, which have bricked boards, and
@@ -95,8 +98,8 @@ boards are detected and left untouched.
 colour, nothing written to onboard flash. Other SteelSeries models are left
 alone.
 
-These devices follow the **All** colour; they aren't driven when you're editing
-a single strip.
+Like a strip, a USB device is driven while it's targeted: ticked in **All**, or
+picked on its own. Effects work on it too.
 
 ## Plugins
 

@@ -129,7 +129,6 @@
   .device.stale .name b { color: var(--faint); }
   .icon-btn { width: 34px; height: 34px; border: none; background: none; border-radius: 8px; color: var(--muted); padding: 6px; flex: none; }
   .icon-btn svg { width: 22px; height: 22px; }
-  .mini { display: flex; gap: 6px; margin-top: 8px; }
   .pref { display: flex; align-items: center; gap: 12px; padding: 9px 0; }
   .pref + .pref { border-top: 1px solid var(--line); }
   .pref .text { flex: 1; min-width: 0; }
@@ -403,9 +402,10 @@ function render() {
   $("preview").style.opacity = s.power ? 1 : 0.3;          // off: the colour is kept, not shown
 
   // colour: targets, wheel, presets, brightness, effects, music
-  const live = s.devices.filter((d) => d.kind === "ble" && d.connected);
+  const live = s.devices.filter((d) => d.kind === "usb" || d.connected);
+  const picked = Array.isArray(s.target) ? s.target : [];   // chips toggle; several devices edit together
   const targets = $("targets"); targets.replaceChildren(chip("All", s.target === "all", () => cmd("set_target", s.target === "all" ? null : "all")));
-  for (const d of live) targets.append(chip(d.name, s.target === d.id, () => cmd("set_target", s.target === d.id ? null : d.id)));
+  for (const d of live) targets.append(chip(d.name, picked.includes(d.id), () => cmd("set_target", picked.includes(d.id) ? picked.filter((id) => id !== d.id) : [...picked, d.id])));
   const wasHidden = $("editor").hidden;
   $("editor").hidden = !s.editable; $("no-editor").hidden = s.editable;
   if (!busy.has("wheel")) wheel.setColor(s.color);
@@ -514,11 +514,6 @@ function devices(s) {
     name.querySelector("b").textContent = d.name; name.querySelector("small").textContent = status;
     row.append(check, name);
     if (d.kind === "ble") row.append(iconBtn(penIcon, () => rename(d)), iconBtn(trashIcon, () => forget(d)));
-    if (d.id === "msi-mystic-light" && s.msi_effect) {
-      const mini = document.createElement("div"); mini.className = "mini";
-      for (const m of ["static", "rainbow"]) mini.append(chip(cap(m), s.msi_effect === m, () => cmd("set_msi_effect", m), !!(s.effect || s.live)));
-      name.append(mini);
-    }
     box.append(row);
   }
 }

@@ -32,11 +32,12 @@ after another.
 <div class="feature-row feature-row--flip">
 <div markdown="1">
 
-## One strip, or all of them
+## One strip, a few, or all of them
 
 The **Editing** chips above the picker choose the target. **All** sends to every
 ticked strip; click a strip's chip — or its row — and you edit just that one,
-with its own colour, brightness and power loaded into the picker.
+with its own colour, brightness and power loaded into the picker. Click more
+chips to edit those together.
 
 The strips never report their state back, so Lumea keeps each one's last
 command and shows that. Switch from the shelf to the desk and the picker jumps
@@ -117,12 +118,12 @@ updates a second.
 
 ## PC RGB, without the vendor apps <span class="platform">Windows</span>
 
-Supported USB devices appear in the list on their own, always connected. Tick
-one and it mirrors the picker — next to your strips, from the same window.
+Two plugins (Settings › Manage plugins) put your PC's RGB in the device list,
+always connected. Tick a device to make it part of **All**, or pick it under
+**Editing** to colour it on its own — next to your strips, from the same window.
 
-- **MSI Mystic Light** — the motherboard and its RGB/ARGB headers. A
-  **Static / Rainbow** menu on its row; Rainbow has its own speed.
-- **SteelSeries Apex 3** keyboard and **Rival 650** mouse.
+- **MSI Mystic Light** — the motherboard and its RGB/ARGB headers.
+- **SteelSeries** — the **Apex 3** keyboard and the **Rival 650** mouse.
 
 No MSI Center, no SteelSeries GG, no kernel driver. Lumea only sends the
 static-colour report — never the undocumented effect bytes that have bricked

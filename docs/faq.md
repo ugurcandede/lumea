@@ -52,7 +52,7 @@ does nothing at best. Brightness dims the colour instead, and the effects
 Yes, on macOS 13 and later: the Music mode plugin captures the system audio
 through ScreenCaptureKit, so no virtual audio driver. macOS asks for the Screen &
 System Audio Recording permission the first time; allow Lumea and relaunch it.
-The MSI and SteelSeries devices remain Windows-only.
+The MSI and SteelSeries plugins remain Windows-only.
 
 ## Why does music mode want to record my screen?
 

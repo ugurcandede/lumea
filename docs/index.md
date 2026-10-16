@@ -73,7 +73,7 @@ title: Home
     <div class="feature-card">
       <div class="icon">🖥️</div>
       <h3>PC RGB, too</h3>
-      <p>Mirror the colour to an MSI Mystic Light motherboard and SteelSeries Apex 3 / Rival 650 — driverless. <em>Windows.</em></p>
+      <p>Plugins put an MSI Mystic Light motherboard and SteelSeries Apex 3 / Rival 650 in the device list — driverless. <em>Windows.</em></p>
     </div>
     <div class="feature-card">
       <div class="icon">📱</div>
