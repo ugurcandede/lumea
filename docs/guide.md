@@ -11,7 +11,7 @@ description: How to use Lumea
 1. **Scan** — lists the strips nearby. Lumea never touches Bluetooth before you
    scan, so opening it can't steal a connection from anything else.
 2. **Tick** the strips you want, then press **Connect**. Double-click a row to
-   give it an **alias**.
+   give it an **alias**; the bin icon (or a right-click) forgets a saved strip.
 3. Pick a colour. Commands go to every connected target at once.
 
 The same button turns into **Disconnect** once everything ticked is linked, and
@@ -40,7 +40,8 @@ command it sent. Each strip remembers its own.
 
 ## Colour, brightness, power
 
-Drag across the colour square and the hue bar; the strips follow live.
+Drag across the colour square and the hue bar, or type a hex colour into the
+field under the presets; the strips follow live.
 **Brightness** scales the colour itself rather than sending a firmware command,
 because that command differs between strip variants and isn't confirmed.
 
@@ -57,7 +58,7 @@ The **Effect** chips under Brightness animate every device the picker drives:
 
 | Effect | What it does |
 |---|---|
-| **Rainbow** | turns through the colour wheel |
+| **Rainbow** | turns through the colour wheel, starting from your colour |
 | **Breathe** | fades the picked colour in and out |
 | **Cycle** | glides through your presets |
 
