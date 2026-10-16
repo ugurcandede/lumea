@@ -52,7 +52,6 @@ does nothing at best. Brightness dims the colour instead, and the effects
 Yes, on macOS 13 and later: the Music mode plugin captures the system audio
 through ScreenCaptureKit, so no virtual audio driver. macOS asks for the Screen &
 System Audio Recording permission the first time; allow Lumea and relaunch it.
-The MSI and SteelSeries plugins remain Windows-only.
 
 ## Why does music mode want to record my screen?
 
@@ -60,6 +59,14 @@ Because macOS has no audio-only permission: Screen & System Audio Recording is
 the one way an app can hear what the system plays, and it covers the screen as
 well. Lumea reads the audio alone — the screen isn't looked at, recorded or sent
 anywhere, and the microphone isn't involved.
+
+## A plugin says *Needs a newer Lumea* or *Needs a plugin update*
+
+Lumea and each plugin declare the plugin API version they speak. *Needs a newer
+Lumea* means the plugin was written for a newer app than yours: update Lumea
+from Settings › About. *Needs a plugin update* means the installed copy
+predates your Lumea: press **Update** on the Plugins page. Plugins are
+published from the repository, so they update without a new Lumea release.
 
 ## Does Lumea collect any data?
 
@@ -73,6 +80,12 @@ Neither build is signed with a paid certificate. On Windows choose **More
 info → Run anyway** on the SmartScreen prompt; on macOS install with Homebrew,
 which takes care of Gatekeeper, or allow the first launch under *System Settings ›
 Privacy & Security › Open Anyway*.
+
+## Do the MSI and SteelSeries plugins work on macOS?
+
+No. Both drive the hardware through `hidapi`, which Lumea bundles on Windows
+only; on a Mac they install and run but add no device. The strips, effects,
+music mode and the remote work the same on both systems.
 
 ## Is it safe for my MSI motherboard?
 

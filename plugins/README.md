@@ -1,6 +1,6 @@
 # Lumea plugins
 
-Optional add-ons that users install from **Settings › Plugins › Manage** (a page with **Installed** and
+Optional add-ons that users install from **Settings › Manage plugins** (a page with **Installed** and
 **Available** lists). They are **not part of the Lumea build**: a
 plugin is published by merging it to `master`, and every Lumea already installed can download it — no app
 release, no update.
@@ -109,7 +109,7 @@ class Plugin:
      "name": "My plugin",
      "description": "One line shown on the Plugins page",
      "version": "1.0.0",
-     "api": "1.0"
+     "api": "3.0"
    }
    ```
 

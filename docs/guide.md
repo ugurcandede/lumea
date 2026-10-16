@@ -20,6 +20,11 @@ drops every connection.
 Ticked strips, aliases, presets and each strip's last colour are saved, so the
 next launch picks up where you left off — you only scan and connect again.
 
+After a minute without changes Lumea lets go of the Bluetooth links, so idle
+strips don't compete with your headphones; the next colour you pick reconnects
+them. Effects and music keep the links up, and a link that drops on its own is
+retried.
+
 ## Editing one strip, a few, or all of them
 
 The **Editing** chips choose what the picker drives:
@@ -38,6 +43,10 @@ command it sent. Each strip remembers its own.
 Drag across the colour square and the hue bar; the strips follow live.
 **Brightness** scales the colour itself rather than sending a firmware command,
 because that command differs between strip variants and isn't confirmed.
+
+**Power** is the pill at the end of the brightness row: off sends the strips
+their power-off command and turns the USB devices black; on brings the colour
+back.
 
 **Presets** are the 12 dots: **left-click** applies one, **right-click** saves
 the current colour into it.
@@ -59,9 +68,9 @@ Bluetooth strips get about 12 frames a second.
 
 Install **Music mode** from Settings › Manage plugins; its **Music** chips
 appear under Effect and make the lights follow the system audio — a loopback of
-what your PC is playing, so no microphone and no virtual audio driver. On
-macOS (13+) allow Lumea under Screen & System Audio Recording when asked, then
-relaunch it: macOS has no audio-only permission, and Lumea reads the audio
+what your PC is playing, so no microphone and no virtual audio driver. It works
+on Windows and macOS 13+. On macOS allow Lumea under Screen & System Audio
+Recording when asked, then relaunch it: macOS has no audio-only permission, and Lumea reads the audio
 alone, never the screen.
 
 | Mode | What it does |
@@ -104,7 +113,10 @@ picked on its own. Effects work on it too.
 ## Plugins
 
 **Settings › Manage plugins** lists optional add-ons. Install one and switch it
-on; plugins update on their own, without a new Lumea release.
+on; plugins update on their own, without a new Lumea release. **Needs a newer
+Lumea** on a plugin means it was written for a newer app than yours — update
+Lumea; **Needs a plugin update** means the installed copy predates this Lumea's
+plugin API — press **Update**.
 
 **Remote control** drives Lumea from a phone, tablet or another computer's
 browser on the same network: colour, brightness, presets, effects, music, the
@@ -124,4 +136,5 @@ current colour.
 - **Theme** — Auto follows the system; or fixed Light / Dark
 - **Tray icon** colour
 - **Updates** — checks GitHub for a newer version and installs it
+- **Manage plugins** — install, update, remove and switch plugins on or off
 - **Send anonymous usage stats** — see the [FAQ]({{ '/faq' | relative_url }})

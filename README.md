@@ -5,7 +5,7 @@
 # Lumea
 
 **Desktop control for ELK-BLEDOM / MELK Bluetooth LED strips — drive multiple strips at once with a live color picker,
-presets, and a system tray.**
+presets, effects and a system tray. Plugins add your PC's RGB, music mode and a phone remote.**
 
 ![Version](https://img.shields.io/github/v/release/ugurcandede/Lumea?style=flat-square&label=version&color=blue)
 ![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows&logoColor=white)
@@ -15,7 +15,7 @@ presets, and a system tray.**
 
 </div>
 
-# Quick start
+## Quick start
 
 ```bash
 pip install -r requirements.txt
@@ -63,10 +63,13 @@ Download [`Lumea-windows.exe`](https://github.com/ugurcandede/lumea/releases/lat
    **brightness** and **power**; commands go to every connected target at once.
 4. **Presets** — the 12 dots: left-click applies, right-click saves the current color.
 5. **Disconnect** (the same button, once everything ticked is linked) drops every connection.
-6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, usage stats, about.
+6. **Settings** (the icon in the title bar, or the tray menu): theme (auto / light / dark), tray icon colour, usage stats,
+   updates, about, and **Manage plugins**.
 
 Closing the window keeps the app in the **system tray**. Checked devices, aliases, presets and the last color are saved
-and restored on launch, and dropped links auto-reconnect.
+and restored on launch, and dropped links auto-reconnect. After a minute without changes Lumea releases the Bluetooth
+links, so idle strips don't compete with your headphones; the next command reconnects them (effects and music keep
+them up).
 
 ## Features
 
@@ -76,6 +79,7 @@ and restored on launch, and dropped links auto-reconnect.
 - **System tray** — runs in the background; quick colours, power and settings from the menu, icon can reflect the current color
 - **Light / dark theme**, following the system or fixed
 - Settings persistence and auto-reconnect
+- **Updates itself** — the exe swaps in place on Windows, Homebrew on macOS
 - **MSI motherboard RGB** *(Windows, plugin)* — a Mystic Light controller as a device in the list, driverless
 - **SteelSeries RGB** *(Windows, plugin)* — an Apex 3 keyboard and/or Rival 650 mouse as devices in the list, driverless
 - **Effects** — Rainbow, Breathe and Cycle on every device, with a speed control
@@ -133,7 +137,8 @@ microphone, no virtual audio driver. Commands go to the same targets as the pick
 ## Plugins
 
 Settings › **Manage plugins** lists optional add-ons; install one and switch it on. They update on their own, without a
-new Lumea release (see [plugins/README.md](plugins/README.md) for how they work and how to write one).
+new Lumea release (see [plugins/README.md](plugins/README.md) for how they work and how to write one). **Random color**
+is the small example to start from.
 
 **Remote control** drives Lumea from a phone, tablet or another computer's browser on the same network: colour,
 brightness, presets, effects and music, the strips and devices, and the app's settings. Switch it on, then scan the
@@ -149,15 +154,21 @@ settings.
 ## Layout
 
 ```
-main.py          entry point: QApplication + qasync event loop
-analytics.py     one anonymous daily ping (opt-out in Settings)
-ble.py           scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
-effects.py       Rainbow / Breathe / Cycle colour maths
-ui.py            LedController: device list, color, presets, system tray
-colorpicker.py   embedded SV-square + hue-bar color picker
-icon.py          app icon + dynamic tray icon
-protocol.py      pure command encoders
-plugins/         optional add-ons: music, msi, steelseries, remote-control (see plugins/README.md)
+main.py            entry point: QApplication + qasync event loop
+ui.py              LedController: device list, editor, presets, effects, settings, system tray
+ble.py             scan(); ElkBledom (one strip); DeviceManager (many strips, fan-out)
+protocol.py        the strip's byte frames + scale_rgb (client-side brightness)
+effects.py         Rainbow / Breathe / Cycle colour maths
+colorpicker.py     embedded SV-square + hue-bar color picker
+icon.py            app icon + dynamic tray icon
+theme.py           light / dark palettes and the stylesheet
+updates.py         self-update: exe swap on Windows, Homebrew on macOS
+analytics.py       one anonymous daily ping (opt-out in Settings)
+plugin_api.py      LumeaAPI, the one surface plugins use
+plugin_host.py     downloads, loads and runs plugins
+plugin_runtime.py  libraries bundled for plugins (hidapi, numpy, …)
+plugins/           the plugins: msi, steelseries, music, remote-control, random_color (see plugins/README.md)
+tools/plugins.py   maintains and checks plugins/version.json
 ```
 
 ---

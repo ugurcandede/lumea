@@ -38,8 +38,8 @@ macOS asks once for Bluetooth access; allow it, or Lumea can't see your strips.
 
 ## Run from source
 
-Requires Python 3.11 or later (3.11–3.13 if PySide6 has no wheel for the newest
-one yet).
+Requires Python 3.11 or later. If `pip install` can't find a PySide6 wheel for
+the newest Python, use 3.11–3.13.
 
 ```bash
 git clone https://github.com/ugurcandede/Lumea.git
@@ -71,4 +71,8 @@ brew uninstall --cask lumea
 
 On Windows, quit Lumea from the tray and delete the exe. Settings live in the
 registry under `HKEY_CURRENT_USER\Software\ugurcandede\Lumea`; on macOS in
-`~/Library/Preferences/com.ugurcandede.Lumea.plist`.
+`~/Library/Preferences/com.ugurcandede.Lumea.plist`. Installed plugins sit in
+`%APPDATA%\ugurcandede\Lumea\plugins` (macOS:
+`~/Library/Application Support/ugurcandede/Lumea/plugins`), and on Windows the
+exe unpacks itself into `%LOCALAPPDATA%\ugurcandede\Lumea` — delete both to
+remove every trace.

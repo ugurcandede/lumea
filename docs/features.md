@@ -93,9 +93,10 @@ the colour being sent right now. Bluetooth strips get about 12 frames a second.
 ## Music mode
 
 A plugin (Settings › Manage plugins) that makes the lights follow whatever your
-PC is playing — a loopback of the system audio, so **no microphone** and **no
-virtual audio driver**. macOS (13+) asks for the Screen & System Audio Recording
-permission the first time: the only way it lets an app hear the system audio.
+PC is playing, on Windows and macOS 13+ — a loopback of the system audio, so
+**no microphone** and **no virtual audio driver**. macOS asks for the Screen &
+System Audio Recording permission the first time: the only way it lets an app
+hear the system audio.
 Lumea reads the audio alone, never the screen or the microphone.
 
 | Mode | What it does |
@@ -125,9 +126,10 @@ always connected. Tick a device to make it part of **All**, or pick it under
 - **MSI Mystic Light** — the motherboard and its RGB/ARGB headers.
 - **SteelSeries** — the **Apex 3** keyboard and the **Rival 650** mouse.
 
-No MSI Center, no SteelSeries GG, no kernel driver. Lumea only sends the
-static-colour report — never the undocumented effect bytes that have bricked
-boards — and the writes are volatile: a reboot restores your BIOS lighting.
+No MSI Center, no SteelSeries GG, no kernel driver. Lumea only sends static
+colours and writes nothing to onboard flash — on the MSI board never the
+undocumented effect bytes that have bricked boards, so a reboot restores your
+BIOS lighting.
 
 </div>
 <div class="shot"><img src="{{ site.baseurl }}/assets/images/usb-devices.png" alt="MSI and SteelSeries devices in the list"></div>
@@ -190,7 +192,7 @@ for the contract; **Random color** is the small example.
 <div class="feature-row feature-row--flip">
 <div markdown="1">
 
-## Tray, themes and updates
+## Tray, themes, updates and privacy
 
 - **Lives in the tray.** Closing the window keeps Lumea running; quick colours,
   power and settings are in the tray menu. The tray icon can show the strip
