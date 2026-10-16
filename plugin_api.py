@@ -29,7 +29,12 @@ import updates
 # set_music / set_sensitivity / set_band are gone. New: "live" and "plugins" in
 # state(), begin_live / live_frame / end_live, register / unregister / call, and
 # the optional Plugin.editor_widget() (a row under Effect, like settings_widget).
-API_VERSION = (2, 0)
+# 3.0: the MSI and SteelSeries devices became plugins -- "msi_effect" and
+# set_msi_effect are gone (for an effect on the MSI device alone: target it, then
+# pick one). New: add_device / remove_device; a USB device is an editor target like
+# a strip. Several devices can be edited together: "target" is "all", None or the
+# list of picked ids, and set_target takes such a list.
+API_VERSION = (3, 0)
 
 
 class LumeaAPI(QObject):
@@ -53,9 +58,9 @@ class LumeaAPI(QObject):
 
     def state(self):
         c = self._c
-        devices = [{"id": ctl.card_id, "name": ctl.name, "kind": "usb", "connected": True,
-                    "in_range": True, "selectable": True, "checked": c._is_synced(ctl)}
-                   for ctl in c._locals]
+        devices = [{"id": did, "name": dev.name, "kind": "usb", "connected": True,
+                    "in_range": True, "selectable": True, "checked": did in c._selected}
+                   for did, dev in c._devices.items()]
         for address in sorted(c._known, key=lambda a: c._display(a).lower()):
             devices.append({"id": address, "name": c._display(address), "kind": "ble",
                             "connected": c._manager.is_connected(address),
@@ -71,13 +76,12 @@ class LumeaAPI(QObject):
             "brightness": c._brightness,
             "presets": list(c._presets),
             "editable": c._editor_active(),          # False: nothing to edit (the desktop hides the editor)
-            "target": c._focus if c._focus is not None else ("all" if c._bulk else None),
+            "target": [d["id"] for d in devices if d["id"] in c._focus] if c._focus else ("all" if c._bulk else None),
             "effects": list(effects.MODES),
             "effect": c._fx.mode if c._fx is not None else None,
             "effect_speed": c._fx_speed,
             "live": c._live_label,                   # what a plugin drives the lights with (begin_live), or None
             "plugins": {name: state() for name, (state, _) in self._plugins.items()},   # see register()
-            "msi_effect": c._msi_effect if c._msi is not None else None,
             "devices": devices,
             "scanning": not c._scan_btn.isEnabled(),
             "link": link.text().lower() if link.isEnabled() else None,   # "connect" | "disconnect" | None
@@ -115,12 +119,14 @@ class LumeaAPI(QObject):
             self._c._save_preset(index)
 
     def set_target(self, target):
-        """"all", a strip address, or None (nothing targeted)."""
+        """"all", None (nothing targeted), or a list of device ids (strips' addresses,
+        USB devices' ids) to edit together; a single one loads its state into the editor."""
         c = self._c
-        if target in c._known:
-            c._on_card_focus(target)
+        picked = {t for t in target if isinstance(t, str) and c._live(t)} if isinstance(target, list) else set()
+        if len(picked) == 1:
+            c._on_card_focus(picked.pop())
             return
-        c._focus = None
+        c._focus = picked
         c._bulk = target == "all"
         c._refresh_focus_ui()
 
@@ -132,8 +138,8 @@ class LumeaAPI(QObject):
         self._c._fx_speed_row.findChild(QSlider).setValue(int(value))
 
     def set_checked(self, device_id, on):
-        """Tick a strip into the control group, or sync a USB device."""
-        card = self._c._cards.get(device_id) or self._c._local_cards.get(device_id)
+        """Tick a strip or a USB device into the control group."""
+        card = self._c._cards.get(device_id)
         if card is not None and card._check.isEnabled():
             card._check.setChecked(bool(on))        # -> the card's toggled handler
 
@@ -151,12 +157,6 @@ class LumeaAPI(QObject):
     def forget(self, address):
         if address in self._c._known:
             self._c._on_card_remove(address)
-
-    def set_msi_effect(self, mode):
-        c = self._c
-        card = c._local_cards.get(c._msi.card_id) if c._msi is not None else None
-        if card is not None and mode in ("static", "rainbow") and card._effect_btn.isEnabled():
-            card._select_effect(mode)
 
     def show_status(self, text):
         self._c._set_status(text)
@@ -227,3 +227,19 @@ class LumeaAPI(QObject):
             return False
         entry[1][command](*args)
         return True
+
+    # ---- devices a plugin adds (3.0) -------------------------------------------
+
+    def add_device(self, device):
+        """Put a USB (or other always-on-hand) device in the list, next to the strips:
+        a row with a checkbox (ticked = part of All), an edit-target chip, an entry
+        in state()["devices"] with kind "usb". ``device`` has ``id`` (stable: it
+        keys the saved selection and colour), ``name``, ``subtitle`` and
+        ``set_color(r, g, b)``, called synchronously with the brightness already
+        applied -- keep it fast, or at least rare (the app spaces its pushes to a
+        slow device by how long the last one took). A device left on last time
+        gets that colour back right away. Remove it in Plugin.stop()."""
+        self._c._add_device(device)
+
+    def remove_device(self, device_id):
+        self._c._remove_device(device_id)

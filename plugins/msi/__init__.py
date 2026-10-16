@@ -1,30 +1,43 @@
-"""MSI Mystic Light (USB HID) transport -- optional Windows motherboard RGB.
+"""MSI Mystic Light: the motherboard's RGB (and its RGB/ARGB headers) as a device
+in Lumea's list -- Windows, driverless: USB HID through hidapi, no MSI Center.
 
-Mirrors ble.py's role for a different backend. The motherboard's Mystic Light
-controller is a USB HID device that self-identifies as "MYSTIC LIGHT"; we drive it
-in pure user space via hidapi (no kernel driver, no MSI software) using the
-static-color feature report built in protocol.py.
-
-hidapi is an OPTIONAL dependency. If it is missing, or no supported controller is
-present, `open_controller()` returns None and the UI simply omits the MSI sync
-toggle. Only the verified 185-byte controller variant is driven -- any other
-variant is left untouched, since the wrong byte layout can brick the controller.
+protocol.py builds the one verified feature report; this file opens the controller
+and hands it to the app with api.add_device(). Static colour only, applied live
+(never written to flash): the firmware's effect/mode bytes are undocumented and
+have bricked boards, so they are never sent. Only the verified 185-byte controller
+variant is driven -- any other is detected and left untouched. Read
+plugins/README.md for the plugin contract.
 """
 
 import logging
 
 try:
-    import hid
-except ImportError:  # optional; the feature is hidden when absent
+    import hid                      # hidapi: Windows only (plugin_runtime.py bundles it there)
+except ImportError:
     hid = None
 
-import protocol
+from . import protocol
 
 log = logging.getLogger(__name__)
 
 MSI_VID = 0x1462
 _PRODUCT = "MYSTIC LIGHT"
 _USAGE_PAGE = 0x0001
+
+
+class Plugin:
+    def __init__(self, api):
+        self.api = api
+        self.device = open_controller()
+        if self.device is None:
+            log.info("MSI Mystic Light: no supported controller found")
+            return
+        api.add_device(self.device)
+
+    def stop(self):
+        if self.device is not None:
+            self.api.remove_device(self.device.id)
+            self.device.close()
 
 
 def _find_path():
@@ -51,18 +64,14 @@ def open_controller():
 
 
 class MysticLight:
-    """One connection to the motherboard's Mystic Light controller.
+    """One connection to the motherboard's Mystic Light controller: Lumea's device
+    contract (id, name, subtitle, set_color). Writes are synchronous (~1 ms) and
+    never read back; like every device in the list, the app shows the last colour
+    it sent."""
 
-    Writes are synchronous and fast (~1 ms), so the UI calls set_color directly --
-    no asyncio needed. Like the BLE strips, the device is never read back for state.
-    """
-
-    # Common local-controller interface (shared with steelseries.py) so the UI can
-    # list every USB device the same way. MSI alone supports the software rainbow.
-    card_id = "msi-mystic-light"
+    id = "msi-mystic-light"
     name = "MSI Mystic Light"
     subtitle = "Motherboard · USB"
-    effect = True
 
     def __init__(self, path):
         self._dev = hid.device()
@@ -84,8 +93,8 @@ class MysticLight:
         data[0] = protocol.MSI_REPORT_ID
         return bytes(data)
 
-    def set_color(self, r, g, b, brightness=100):
-        r, g, b = protocol.scale_rgb(r, g, b, brightness)
+    def set_color(self, r, g, b):
+        """(r, g, b) with the brightness already applied by the app."""
         self._dev.send_feature_report(protocol.msi_frame(self._base, r, g, b))
 
     def close(self):

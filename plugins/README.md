@@ -1,6 +1,6 @@
 # Lumea plugins
 
-Optional add-ons that users install from **Settings › Plugins › Manage** (a page with **Installed** and
+Optional add-ons that users install from **Settings › Manage plugins** (a page with **Installed** and
 **Available** lists). They are **not part of the Lumea build**: a
 plugin is published by merging it to `master`, and every Lumea already installed can download it — no app
 release, no update.
@@ -87,6 +87,11 @@ class Plugin:
 - To drive the lights like an effect: `api.begin_live(label)`, then `api.live_frame((r, g, b))` per tick,
   `api.end_live()` to stop. `state()["live"]` names the driver; when it no longer names yours, the app ended the
   session (an effect started, the power went off) and you stop producing frames.
+- To put a device in the list, as the MSI and SteelSeries plugins do with their USB controllers:
+  `api.add_device(device)` in `__init__`, `api.remove_device(device.id)` in `stop()`. `device` has `id` (stable:
+  it keys the saved selection and colour), `name`, `subtitle` and `set_color(r, g, b)`, called synchronously with
+  the brightness already applied. The app does the rest: the row and its checkbox, the **Editing** chip, power
+  (black), effects, and spacing its pushes to a slow device by how long the last one took.
 - To let other plugins — the remote control — see and drive yours: `api.register(name, state_fn, {command: fn})`.
   It shows as `state()["plugins"][name]` and runs through `api.call(name, command, args)`; the command checks
   its arguments, they come from a phone.
@@ -104,7 +109,7 @@ class Plugin:
      "name": "My plugin",
      "description": "One line shown on the Plugins page",
      "version": "1.0.0",
-     "api": "1.0"
+     "api": "3.0"
    }
    ```
 
@@ -123,6 +128,7 @@ class Plugin:
 | The Plugins page says | Meaning |
 |---|---|
 | Needs a newer Lumea | The plugin's `api` is newer than this build, or it requires a module this build doesn't bundle. Update Lumea. |
+| Needs a plugin update | The installed copy was written for an older API major than this Lumea has. Press Update. |
 | Install failed: … doesn't match the plugin list | GitHub's cache served a file older than `version.json`. Wait a few minutes and retry. |
 | Couldn't start: … | `Plugin.__init__` raised; the log has the traceback. |
 | Couldn't load the plugin list. | No network, or GitHub unreachable. Installed plugins still work. |

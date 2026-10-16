@@ -123,13 +123,6 @@ QPushButton#power:hover { border-color: $muted; }
 QPushButton#power[on="true"] { background-color: $primary_bg; color: $primary_fg; border-color: $primary_bg; }
 QPushButton#power:disabled { color: $disabled_fg; border-color: $disabled_bg; background-color: $panel; }
 
-QPushButton#menuBtn {
-    min-height: 22px; max-height: 22px; padding: 0 9px; border-radius: 7px;
-    border: 1px solid $line; background-color: $panel; font-size: 12px; font-weight: 500;
-}
-QPushButton#menuBtn:hover { border-color: $muted; }
-QPushButton#menuBtn:disabled { color: $disabled_fg; border-color: $disabled_bg; }
-
 /* Segmented control (Settings > Theme). */
 QWidget#segment { background-color: $inset; border-radius: 9px; }
 QPushButton#segBtn {
@@ -146,8 +139,8 @@ QFrame#deviceRow[unavailable="true"] QLabel#rowName { color: $faint; }
 QFrame#deviceRow[unavailable="true"] QLabel#rowSub { color: $faint; }
 QFrame#emptyRow { border: 1px dashed $line; border-radius: 10px; }
 
-QScrollArea#deviceScroll { background: transparent; border: none; }
-QScrollArea#deviceScroll > QWidget > QWidget { background: transparent; }
+QScrollArea#deviceScroll, QScrollArea#chipStrip { background: transparent; border: none; }
+QScrollArea#deviceScroll > QWidget > QWidget, QScrollArea#chipStrip > QWidget > QWidget { background: transparent; }
 QScrollBar:vertical { background: transparent; width: 6px; margin: 2px; }
 QScrollBar::handle:vertical { background: $line; border-radius: 3px; min-height: 24px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }

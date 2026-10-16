@@ -50,7 +50,9 @@ def compatible(entry):
         major, minor = (int(x) for x in str(entry["api"]).split("."))
     except (KeyError, ValueError):
         return "Invalid plugin entry"
-    if major != API_VERSION[0] or minor > API_VERSION[1]:
+    if major < API_VERSION[0]:
+        return "Needs a plugin update"      # written for an older API; Update fixes it
+    if major > API_VERSION[0] or minor > API_VERSION[1]:
         return "Needs a newer Lumea"
     missing = [m for m in entry.get("requires", []) if not _importable(m)]
     if missing:

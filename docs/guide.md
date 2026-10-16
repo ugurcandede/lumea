@@ -20,13 +20,20 @@ drops every connection.
 Ticked strips, aliases, presets and each strip's last colour are saved, so the
 next launch picks up where you left off — you only scan and connect again.
 
-## Editing one strip or all of them
+After a minute without changes Lumea lets go of the Bluetooth links, so idle
+strips don't compete with your headphones; the next colour you pick reconnects
+them. Effects and music keep the links up, and a link that drops on its own is
+retried.
+
+## Editing one strip, a few, or all of them
 
 The **Editing** chips choose what the picker drives:
 
 - **All** — every ticked strip gets the same colour, brightness and power.
 - **A single strip** — click its chip to edit it on its own. Its own last
   colour loads into the picker.
+- **A few** — click more chips; they get what you pick next. The row scrolls
+  sideways when the chips outgrow it.
 
 The strips never report their state back, so what Lumea shows is the last
 command it sent. Each strip remembers its own.
@@ -36,6 +43,10 @@ command it sent. Each strip remembers its own.
 Drag across the colour square and the hue bar; the strips follow live.
 **Brightness** scales the colour itself rather than sending a firmware command,
 because that command differs between strip variants and isn't confirmed.
+
+**Power** is the pill at the end of the brightness row: off sends the strips
+their power-off command and turns the USB devices black; on brings the colour
+back.
 
 **Presets** are the 12 dots: **left-click** applies one, **right-click** saves
 the current colour into it.
@@ -57,9 +68,9 @@ Bluetooth strips get about 12 frames a second.
 
 Install **Music mode** from Settings › Manage plugins; its **Music** chips
 appear under Effect and make the lights follow the system audio — a loopback of
-what your PC is playing, so no microphone and no virtual audio driver. On
-macOS (13+) allow Lumea under Screen & System Audio Recording when asked, then
-relaunch it: macOS has no audio-only permission, and Lumea reads the audio
+what your PC is playing, so no microphone and no virtual audio driver. It works
+on Windows and macOS 13+. On macOS allow Lumea under Screen & System Audio
+Recording when asked, then relaunch it: macOS has no audio-only permission, and Lumea reads the audio
 alone, never the screen.
 
 | Mode | What it does |
@@ -80,9 +91,10 @@ when it starts; after switching speakers or headphones, pick the mode again.
 
 ## PC RGB <small>(Windows)</small>
 
-Supported USB devices show up in the device list on their own, always
-*Connected*. Tick one to mirror the picker's colour to it, alongside your
-strips. Both paths are driverless — no MSI Center, no SteelSeries GG.
+Install the **MSI Mystic Light** or **SteelSeries** plugin (Settings › Manage
+plugins) and the device shows up in the list, always *Connected*. Tick it to
+make it part of **All**, or click its row (or its **Editing** chip) to edit it
+alone, like a strip. Both are driverless — no MSI Center, no SteelSeries GG.
 
 **MSI Mystic Light** — the motherboard and its RGB/ARGB headers. Static colour
 only: Lumea never sends firmware effect bytes, which have bricked boards, and
@@ -95,13 +107,16 @@ boards are detected and left untouched.
 colour, nothing written to onboard flash. Other SteelSeries models are left
 alone.
 
-These devices follow the **All** colour; they aren't driven when you're editing
-a single strip.
+Like a strip, a USB device is driven while it's targeted: ticked in **All**, or
+picked on its own. Effects work on it too.
 
 ## Plugins
 
 **Settings › Manage plugins** lists optional add-ons. Install one and switch it
-on; plugins update on their own, without a new Lumea release.
+on; plugins update on their own, without a new Lumea release. **Needs a newer
+Lumea** on a plugin means it was written for a newer app than yours — update
+Lumea; **Needs a plugin update** means the installed copy predates this Lumea's
+plugin API — press **Update**.
 
 **Remote control** drives Lumea from a phone, tablet or another computer's
 browser on the same network: colour, brightness, presets, effects, music, the
@@ -121,4 +136,5 @@ current colour.
 - **Theme** — Auto follows the system; or fixed Light / Dark
 - **Tray icon** colour
 - **Updates** — checks GitHub for a newer version and installs it
+- **Manage plugins** — install, update, remove and switch plugins on or off
 - **Send anonymous usage stats** — see the [FAQ]({{ '/faq' | relative_url }})

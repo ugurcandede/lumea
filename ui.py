@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QPointF, QRectF, Qt, QSettings, QTimer, QUrl, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QPointF, QRectF, QSize, Qt, QSettings, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QCursor, QDesktopServices, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -46,9 +46,7 @@ import ble
 import colorpicker
 import effects
 import icon
-import msi_mystic
 import protocol
-import steelseries
 import theme
 import updates
 from plugin_api import LumeaAPI
@@ -73,11 +71,12 @@ DEFAULT_EFFECT_SPEED = 30
 # up, and the strip lags further and further and keeps playing after Off. The
 # picker's debounce rate (80 ms) is known to keep up.
 LIVE_BLE_INTERVAL_MS = 80
-# Local USB pushes are synchronous on the event loop. MSI and the Apex 3 take
-# <1 ms, but the Rival 650 takes ~45 ms (32 HID writes), which pushed per frame
-# would stall the whole app. Each controller therefore waits out this many times
-# its own last write before the next, capping it to a fraction of the loop; a
-# frame arriving meanwhile is pushed once the wait ends (see _push_local).
+# Pushes to the USB devices plugins add (api.add_device) are synchronous on the
+# event loop. MSI and the Apex 3 take <1 ms, but the Rival 650 takes ~45 ms (32
+# HID writes), which pushed per frame would stall the whole app. Each device
+# therefore waits out this many times its own last write before the next, capping
+# it to a fraction of the loop; a frame arriving meanwhile is pushed once the wait
+# ends (see _push_device).
 LOCAL_BUDGET = 4
 # The colour tray icon follows effects / music at most this often: each change
 # re-registers the icon with the shell, too costly to do every frame.
@@ -308,17 +307,14 @@ class _DeviceCard(QFrame):
             trash.setProperty("glyph", "trash")
             trash.setIcon(icon.glyph("trash", theme.current["muted"], 14))
             row.addWidget(trash)
-        self._row = row
         head = QWidget()
         head.setFixedHeight(40)
         head.setLayout(row)
 
-        # Vertical outer so an effect can add an expandable area below the row.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 0, 12, 0)
         outer.setSpacing(0)
         outer.addWidget(head)
-        self._outer = outer
 
         self.set_status(False)
 
@@ -356,8 +352,8 @@ class _DeviceCard(QFrame):
 
     def mousePressEvent(self, event):
         # Clicking the row body (not the checkbox, which eats its own clicks)
-        # focuses this strip so the editor targets it. BLE rows only.
-        if self._removable and event.button() == Qt.MouseButton.LeftButton:
+        # focuses this device so the editor targets it.
+        if event.button() == Qt.MouseButton.LeftButton:
             self.focusRequested.emit(self._address)
         super().mousePressEvent(event)
 
@@ -380,66 +376,6 @@ class _DeviceCard(QFrame):
         menu.addAction("Rename…", lambda: self.renameRequested.emit(self._address))
         menu.addAction("Forget this strip", lambda: self.removeRequested.emit(self._address))
         menu.exec(event.globalPos())
-
-    def set_effect_menu(self, mode, callback, speed, speed_callback):
-        """Static/Rainbow dropdown on the row + a Speed slider below it, shown
-        only while Rainbow is selected. callback(mode) / speed_callback(value)."""
-        self._effect_mode = mode
-        self._effect_cb = callback
-        self._speed_cb = speed_callback
-
-        self._effect_btn = _button(f"{mode.capitalize()}  ▾", "menuBtn", self._open_effect_menu)
-        self._row.insertWidget(self._row.count() - 2, self._effect_btn)  # before the status
-
-        self._speed_value = _label(f"{speed}%", "value")
-        head = QHBoxLayout()
-        head.setContentsMargins(0, 0, 0, 0)
-        head.addWidget(_label("Speed", "sectionLabel"))
-        head.addStretch()
-        head.addWidget(self._speed_value)
-
-        self._speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self._speed_slider.setObjectName("brightness")   # reuse the slider style
-        self._speed_slider.setRange(1, 100)
-        self._speed_slider.setValue(speed)
-        self._speed_slider.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._speed_slider.valueChanged.connect(self._on_speed)
-
-        speed_box = QVBoxLayout()
-        speed_box.setContentsMargins(0, 0, 0, 10)
-        speed_box.setSpacing(6)
-        speed_box.addLayout(head)
-        speed_box.addWidget(self._speed_slider)
-        self._speed_area = QWidget()
-        self._speed_area.setLayout(speed_box)
-        self._speed_area.setVisible(mode == "rainbow")
-        self._outer.addWidget(self._speed_area)
-
-    def _on_speed(self, value):
-        self._speed_value.setText(f"{value}%")
-        self._speed_cb(value)
-
-    def _open_effect_menu(self):
-        menu = _menu(self)
-        for label, mode in (("Static", "static"), ("Rainbow", "rainbow")):
-            act = menu.addAction(label)
-            act.setCheckable(True)
-            act.setChecked(self._effect_mode == mode)
-            act.triggered.connect(lambda _checked=False, m=mode: self._select_effect(m))
-        menu.exec(self._effect_btn.mapToGlobal(self._effect_btn.rect().bottomLeft()))
-
-    def _select_effect(self, mode):
-        if mode == self._effect_mode:
-            return
-        self._effect_mode = mode
-        self._effect_btn.setText(f"{mode.capitalize()}  ▾")
-        self._speed_area.setVisible(mode == "rainbow")
-        self._effect_cb(mode)
-
-    def set_effect_enabled(self, enabled, reason):
-        """Grey the effect menu out, showing ``reason`` as its tooltip, or restore it."""
-        self._effect_btn.setEnabled(enabled)
-        self._effect_btn.setToolTip("" if enabled else reason)
 
 
 class _StackLayout(QStackedLayout):
@@ -502,6 +438,42 @@ class _TitleBar(QWidget):
             event.accept()
 
 
+class _ChipStrip(QScrollArea):
+    """One row of chips that scrolls sideways instead of wrapping: the edit
+    targets, All plus one per device, outgrow the window's width once a few USB
+    devices are in the list. No scrollbar; the wheel scrolls it."""
+
+    def __init__(self, layout):
+        super().__init__()
+        self.setObjectName("chipStrip")
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        inner = QWidget()
+        inner.setLayout(layout)
+        self.setWidget(inner)
+
+    def sizeHint(self):
+        # As tall as the chips, no wider than the layout offers.
+        return QSize(0, self.widget().sizeHint().height())
+
+    minimumSizeHint = sizeHint
+
+    def eventFilter(self, obj, event):
+        # Chips come and go (QScrollArea watches its widget): so does the height.
+        if obj is self.widget() and event.type() in (QEvent.Type.Resize, QEvent.Type.LayoutRequest):
+            self.updateGeometry()
+        return super().eventFilter(obj, event)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta()
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.value() - (delta.x() or delta.y()) // 2)
+        event.accept()
+
+
 class LedController(QWidget):
     def __init__(self, close_event):
         super().__init__()
@@ -515,25 +487,17 @@ class LedController(QWidget):
         self._close_event = close_event
         self._settings = QSettings()
         self._manager = ble.DeviceManager(on_disconnect=self._on_device_disconnect)
-        self._msi = msi_mystic.open_controller()  # None unless an MSI board is present
-        # Every local USB controller (MSI + SteelSeries), each shown as a Devices row.
-        self._locals = ([self._msi] if self._msi is not None else []) + steelseries.open_controllers()
+        self._devices = {}                     # id -> USB device a plugin added (api.add_device)
         self._desired: set[str] = set()       # addresses we want connected
         self._in_range: set[str] = set()      # addresses seen in the last scan this session
         self._scanned = False                 # any scan run yet? (before one, range is unknown)
         self._reconnecting: set[str] = set()
-        self._cards: dict[str, _DeviceCard] = {}
-        self._local_cards: dict[str, _DeviceCard] = {}
+        self._cards: dict[str, _DeviceCard] = {}   # strips and USB devices alike, by id
         self._chips: dict[str | None, QPushButton] = {}   # None = the "All" chip
         self._power_on = False                 # optimistic: last command sent (active editor)
-        self._focus: str | None = None         # focused BLE strip (None unless one is picked)
+        self._focus: set[str] = set()          # picked edit targets (chips); empty: All if _bulk, else nothing
         self._bulk = True                      # All mode: edits fan out to every ticked strip
         self._loading = False                  # suppress sends while loading editor from state
-        self._msi_effect = "static"            # MSI mode: "static" (picker) or "rainbow"
-        self._effect_hue = 0.0
-        self._effect_timer = QTimer(self)
-        self._effect_timer.setInterval(EFFECT_INTERVAL_MS)
-        self._effect_timer.timeout.connect(self._effect_tick)
         self._live_label = None                # what a plugin drives the lights with (api.begin_live), or None
         self._plugin_sections = {}             # plugin id -> (instance, its editor_widget()), shown under Effect
         self._fx = None                        # effects.Effect while one runs
@@ -546,13 +510,13 @@ class LedController(QWidget):
         self._live_sending = False             # a _send_live_frames task is scheduled or running
         self._tray_rgb = None                  # colour the tray icon shows while animating
         self._tray_next = 0.0                  # ...and when it may change next
-        # Per-local time budget (see LOCAL_BUDGET): card_id -> earliest next push,
+        # Per-device time budget (see LOCAL_BUDGET): device id -> earliest next push,
         # and the newest frame waiting for that moment.
         self._local_next: dict[str, float] = {}
         self._local_pending: dict[str, tuple] = {}
         self._local_retry = QTimer(self)
         self._local_retry.setSingleShot(True)
-        self._local_retry.timeout.connect(self._flush_local_pending)
+        self._local_retry.timeout.connect(self._flush_device_pending)
         self._idle = False                     # True once we've released links to idle
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
@@ -593,11 +557,6 @@ class LedController(QWidget):
         # Don't auto-connect on launch: opening the app (it lives in the tray)
         # must not seize Bluetooth. The user scans + connects when they want to
         # control the strips; commands reconnect on demand after an idle release.
-
-        # Restore every synced local controller to the last colour -- unless they
-        # were left off, which the restored power state (_load_state) says.
-        if self._power_on:
-            self._push_local_colors()
 
         self._updates = updates.UpdateChecker(self)
         self._updates.found.connect(self._set_update)
@@ -714,22 +673,25 @@ class LedController(QWidget):
         self._color_timer.setInterval(COLOR_DEBOUNCE_MS)
         self._color_timer.timeout.connect(self._on_color_timeout)
 
-        # Edit-target row: "All" plus a chip per live strip (rebuilt in
-        # _refresh_focus_ui); a hint replaces them while nothing can be edited.
+        # Edit-target row: "Editing", then All plus a chip per live device (rebuilt
+        # in _refresh_focus_ui) in a strip that scrolls sideways, then a hint while
+        # nothing is targeted. Chips toggle: pick several to edit them together.
+        self._target_label = _label("Editing", "sectionLabel")
+        self._target_label.setContentsMargins(0, 0, 4, 0)
+        self._target_hint = _label("", "hint")
+        for lbl in (self._target_label, self._target_hint):
+            lbl.setFixedHeight(24)             # a chip's height: level with the chips beside it
         self._chip_row = QHBoxLayout()
         self._chip_row.setContentsMargins(0, 0, 0, 0)
         self._chip_row.setSpacing(6)
-        self._target_hint = _label("", "hint")
-        target = QHBoxLayout()
-        target.setContentsMargins(0, 0, 0, 0)
-        target.setSpacing(10)
-        target.addWidget(_label("Editing", "sectionLabel"))
-        target.addLayout(self._chip_row)
-        target.addWidget(self._target_hint)
-        target.addStretch()
+        self._chip_strip = _ChipStrip(self._chip_row)
         target_box = QWidget()
-        target_box.setFixedHeight(26)
-        target_box.setLayout(target)
+        row = QHBoxLayout(target_box)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(self._target_label)
+        row.addWidget(self._chip_strip)
+        row.addWidget(self._target_hint)
 
         self._picker = colorpicker.ColorPicker()
         self._picker.set_color(self._base_color)  # before connecting: no spurious send
@@ -1272,7 +1234,7 @@ class LedController(QWidget):
             f'<span style="color:{t["faint"]}">rooms full of colour</span><br>'
             f'{link(AUTHOR_URL, "ugurcandede")}{dot}{link(SITE_URL, "ugurcandede.github.io")}<br>'
             f'<span style="color:{t["faint"]}">Lumea</span>{dot}{link(version_url, label)}')
-        for card in list(self._cards.values()) + list(self._local_cards.values()):
+        for card in self._cards.values():
             card.set_status(self._manager.is_connected(card._address) if card._removable else True,
                             self._reachable(card._address) if card._removable else True,
                             self._present(card._address) if card._removable else True)
@@ -1475,6 +1437,8 @@ class LedController(QWidget):
     # ---- device list -----------------------------------------------------
 
     def _display(self, address):
+        if address in self._devices:
+            return self._devices[address].name
         return self._aliases.get(address) or self._known.get(address) or address
 
     def _reachable(self, address):
@@ -1499,21 +1463,20 @@ class LedController(QWidget):
             - self._manager.connected_addresses()
 
     def _rebuild_list(self):
-        # Drop every existing card, then rebuild: the local USB controllers first
-        # (MSI + SteelSeries), then the BLE strips sorted by display name.
+        # Drop every existing card, then rebuild: the USB devices plugins added
+        # first, then the BLE strips sorted by display name.
         for card in self._cards.values():
             card.deleteLater()
         self._cards.clear()
-        self._local_cards.clear()
         while self._device_vbox.count() > 1:  # keep the trailing stretch
             item = self._device_vbox.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        if self._focus is not None and self._focus not in self._known:
-            self._focus = None  # focused strip was forgotten
+        # A picked strip that was forgotten, or a stopped plugin's device, drops out.
+        self._focus = {a for a in self._focus if a in self._known or a in self._devices}
 
-        if not self._known and not self._locals:
+        if not self._known and not self._devices:
             empty = QFrame()
             empty.setObjectName("emptyRow")
             empty.setFixedHeight(40)
@@ -1527,23 +1490,17 @@ class LedController(QWidget):
             self._refresh_focus_ui()
             return
 
-        for controller in self._locals:
-            # A local USB device: always "connected", no scan/connect needed. Its
-            # checkbox is the colour-mirror toggle (ticked = in the control group).
-            card = _DeviceCard(controller.card_id, controller.name,
-                               self._is_synced(controller), controller.subtitle,
+        for device_id, device in self._devices.items():
+            # A USB device: always "connected", no scan/connect needed. Its checkbox
+            # ticks it into the control group like a strip's; click the row to edit
+            # it alone.
+            card = _DeviceCard(device_id, device.name, device_id in self._selected, device.subtitle,
                                removable=False)
-            card.toggled.connect(
-                lambda _a, checked, c=controller: self._on_local_sync_toggled(c, checked))
-            if controller.effect:      # only MSI: the Static/Rainbow menu + speed slider
-                card.set_effect_menu(
-                    self._msi_effect, self._on_msi_effect_changed,
-                    self._effect_speed, self._on_speed_changed,
-                )
+            card.toggled.connect(self._on_card_toggled)
+            card.focusRequested.connect(self._on_card_focus)
             card.set_status(True)
-            self._local_cards[controller.card_id] = card
+            self._cards[device_id] = card
             self._device_vbox.insertWidget(self._device_vbox.count() - 1, card)
-        self._refresh_effect_menu()
 
         for address in sorted(self._known, key=lambda a: self._display(a).lower()):
             card = _DeviceCard(address, self._display(address), address in self._selected)
@@ -1562,10 +1519,9 @@ class LedController(QWidget):
     def _fit_device_scroll(self):
         # QScrollArea won't size to its content; fit it to the rows, then scroll
         # past a cap so a long list can't take over the window. Measure the rows
-        # (don't guess a row height) so QSS borders/padding and the taller MSI
-        # rainbow card are counted exactly.
+        # (don't guess a row height) so QSS borders/padding are counted exactly.
         gap = self._device_vbox.spacing()
-        cards = list(self._local_cards.values()) + list(self._cards.values())
+        cards = list(self._cards.values())
         if not cards:
             self._device_scroll.setFixedHeight(40)
             return
@@ -1588,7 +1544,7 @@ class LedController(QWidget):
         # Title bar and tray header: linked strips plus the always-present USB devices.
         if self._idle and self._desired:
             return "Idle"
-        count = len(self._manager.connected_addresses()) + len(self._locals)
+        count = len(self._manager.connected_addresses()) + len(self._devices)
         return f"{count} connected" if count else "Not connected"
 
     def _update_controls_visibility(self):
@@ -1616,6 +1572,8 @@ class LedController(QWidget):
             self._selected.add(address)
         else:
             self._selected.discard(address)
+        if checked and address in self._devices and self._bulk and self._power_on:
+            self._light_device(address)     # a USB device joins All at its colour right away
         self._save_state()
         self._update_controls_visibility()  # Connect enables once a strip is ticked
 
@@ -1653,10 +1611,10 @@ class LedController(QWidget):
     # ---- edit target (focus vs All) --------------------------------------
 
     def _edit_targets(self):
-        # Addresses the editor's changes apply to: the focused strip, or (All
-        # mode) every ticked strip, or nothing. Sends filter to connected ones.
-        if self._focus is not None:
-            return [self._focus]
+        # Device ids the editor's changes apply to: the picked ones, or (All mode)
+        # every ticked one, or nothing. Sends filter to connected ones.
+        if self._focus:
+            return list(self._focus)
         if self._bulk:
             return list(self._selected)
         return []
@@ -1667,16 +1625,14 @@ class LedController(QWidget):
             "color": DEFAULT_COLOR.name(), "brightness": DEFAULT_BRIGHTNESS, "power": False}
 
     def _live(self, address):
-        # Part of the active control session: connected, or wanted (idle-released
-        # but reconnects on the next command). These are the strips you can edit.
-        return self._manager.is_connected(address) or address in self._desired
+        # Part of the active control session: a USB device (always on hand), or a
+        # strip that is connected or wanted (idle-released but reconnects on the
+        # next command). These are the devices you can edit.
+        return address in self._devices or self._manager.is_connected(address) or address in self._desired
 
     def _editor_active(self):
-        # The editor is usable only when it targets a live strip -- or, in All
-        # mode, a synced local USB controller (which needs no BLE link).
-        if any(self._live(a) for a in self._edit_targets()):
-            return True
-        return self._bulk and any(self._is_synced(c) for c in self._locals)
+        # The editor is usable only when it targets a live device.
+        return any(self._live(a) for a in self._edit_targets())
 
     def _update_editor_enabled(self):
         # Hide, don't grey out: a disabled slider still reads as adjustable.
@@ -1712,41 +1668,46 @@ class LedController(QWidget):
         self._loading = False
 
     def _on_card_focus(self, address):
+        # Clicking a row edits that device alone, its state loaded into the editor.
         if not self._live(address):
             self._set_status(f"{self._display(address)}: connect it first to edit it.")
             return
-        if self._focus == address:
+        if self._focus == {address}:
             return
-        self._focus = address
+        self._focus = {address}
         self._bulk = False
         self._load_editor(self._state_of(address))
         self._refresh_focus_ui()
 
     def _on_chip_clicked(self, address):
-        # None = the All chip. Clicking the active chip clears the target (edits
-        # are inert until you pick one again), same as the old All toggle.
+        # None = the All chip, a toggle. Device chips toggle too: the first pick
+        # loads that device's state, further picks join it and the editor keeps
+        # its values (as in All mode). Unpicking the last one, or All, leaves
+        # nothing targeted: edits are inert until you pick again.
         if address is None:
             self._bulk = not self._bulk
-            self._focus = None
-            self._refresh_focus_ui()
-        elif self._focus == address:
-            self._focus = None
-            self._bulk = False
-            self._refresh_focus_ui()
-        else:
+            self._focus.clear()
+        elif address in self._focus:
+            self._focus.discard(address)
+        elif not self._focus:
             self._on_card_focus(address)
+            return
+        else:
+            self._focus.add(address)
+        self._refresh_focus_ui()
 
     def _refresh_focus_ui(self):
         self.api.notify()
-        # Rebuild the target chips: All + every live strip, in list order.
-        live = [a for a in sorted(self._known, key=lambda a: self._display(a).lower())
-                if self._live(a)]
+        # Rebuild the target chips: All + every live device, in list order (the
+        # USB devices, then the strips).
+        live = list(self._devices) + [a for a in sorted(self._known, key=lambda a: self._display(a).lower())
+                                      if self._live(a)]
         wanted = [None] + live
         if list(self._chips) != wanted:
             while self._chip_row.count():
-                item = self._chip_row.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+                widget = self._chip_row.takeAt(0).widget()
+                if widget is not None:
+                    widget.deleteLater()
             self._chips = {}
             for address in wanted:
                 label = "All" if address is None else self._display(address)
@@ -1754,29 +1715,30 @@ class LedController(QWidget):
                 btn.setCheckable(True)
                 self._chips[address] = btn
                 self._chip_row.addWidget(btn)
+            self._chip_row.addStretch()        # chips keep left when they don't fill the strip
         else:
             for address, btn in self._chips.items():
                 if address is not None:
                     btn.setText(self._display(address))
         active = self._editor_active()
-        # No live strip and no synced local: nothing to edit, so no editor at all.
-        editable = bool(live) or any(self._is_synced(c) for c in self._locals)
+        # No live device: nothing to edit, so no editor at all.
+        editable = bool(live)
         self._editor_section.setVisible(editable)
         self._editor_rule.setVisible(editable)
         for address, btn in self._chips.items():
             btn.blockSignals(True)
-            btn.setChecked(self._bulk if address is None else address == self._focus)
+            btn.setChecked(self._bulk if address is None else address in self._focus)
             btn.blockSignals(False)
         self._target_hint.setVisible(not active)
-        self._target_hint.setText("Pick a strip, or All")
+        self._target_hint.setText("Pick a device, or All")
         for address, card in self._cards.items():
-            card.set_focused(address == self._focus)
+            card.set_focused(address in self._focus)
         live = [a for a in self._edit_targets() if self._live(a)]
-        if self._focus is None and self._bulk and live and not self._animating():
-            # The strip never reports state, so All mode shows the remembered one:
-            # On if any live target was last left on (a focused strip loads its own).
-            # Without a live strip (only USB devices), or while an effect / music runs
-            # (on by definition: power-off stops it), keep the last power sent.
+        if (self._bulk or len(self._focus) > 1) and live and not self._animating():
+            # Devices never report state, so All mode (or several picked devices) shows
+            # the remembered one: On if any live target was last left on (a single
+            # picked device loads its own). While an effect / music runs (on by
+            # definition: power-off stops it), keep the last power sent.
             on = any(self._state_of(a)["power"] for a in live)
             if on != self._power_on:
                 self._power_on = on
@@ -1814,9 +1776,6 @@ class LedController(QWidget):
             return
         self._stamp_targets(color=self._base_color.name(), brightness=self._brightness)
         self._color_timer.start()  # debounced send, same path as colour changes
-
-    def _on_speed_changed(self, value):
-        self._effect_speed = value
 
     # ---- color presets ---------------------------------------------------
 
@@ -1871,8 +1830,7 @@ class LedController(QWidget):
             return                     # the effect / music tick drives every device meanwhile
         if not self._power_on:
             return                     # off: keep the colour for when it's turned on (_set_power)
-        if self._bulk:
-            self._push_local_colors()  # locals mirror the bulk colour, not a focus
+        self._push_device_colors()     # the targeted USB devices, right away
         await self._wake()             # re-establish links if we released them to idle
         targets = [a for a in self._edit_targets() if self._manager.is_connected(a)]
         if not targets:
@@ -1887,113 +1845,85 @@ class LedController(QWidget):
             self._set_status(f"Color send failed: {', '.join(self._display(a) for a in failed)}")
         self._touch()
 
-    # ---- rainbow effect --------------------------------------------------
+    # ---- USB devices (added by plugins through api.add_device) ---------------
 
-    def _is_synced(self, controller):
-        return self._local_sync.get(controller.card_id, False)
+    def _add_device(self, device):
+        # Kept in name order, like the strips: rows and chips follow the dict, not
+        # the order the plugins happened to start in.
+        self._devices[device.id] = device
+        self._devices = dict(sorted(self._devices.items(), key=lambda kv: kv[1].name.lower()))
+        st = self._states.get(device.id)
+        if st is not None and st["power"]:     # left on last time: light it as it was
+            color = QColor(st["color"])
+            self._push_device(device.id, protocol.scale_rgb(color.red(), color.green(), color.blue(),
+                                                            st["brightness"]))
+        self._rebuild_list()
 
-    def _push_one(self, controller):
-        # Send the picker colour to one local controller. MSI is skipped while it
-        # runs its own rainbow (the effect drives it instead of the picker).
-        if controller is self._msi and self._msi_effect != "static":
-            return
+    def _remove_device(self, device_id):
+        self._devices.pop(device_id, None)
+        self._local_next.pop(device_id, None)
+        self._local_pending.pop(device_id, None)
+        self._rebuild_list()                   # clears a focus on it, too
+
+    def _device_targets(self):
+        return [a for a in self._edit_targets() if a in self._devices]
+
+    def _editor_frame(self):
+        # The picker colour as the devices show it (brightness applied).
+        c = self._base_color
+        return protocol.scale_rgb(c.red(), c.green(), c.blue(), self._brightness)
+
+    def _light_device(self, device_id):
+        # Send the editor's colour to one USB device and remember it as its state.
+        self._states[device_id] = {"color": self._base_color.name(), "brightness": self._brightness,
+                                   "power": True}
+        if not self._animating():              # else the next effect frame lights it
+            self._push_device(device_id, self._editor_frame())
+
+    def _push_device_colors(self):
+        # The picker colour to every targeted USB device (skipped while an effect /
+        # plugin drives them instead).
         if self._animating():
             return
-        c = self._base_color
-        self._push_local(controller, (c.red(), c.green(), c.blue(), self._brightness))
+        frame = self._editor_frame()
+        for device_id in self._device_targets():
+            self._push_device(device_id, frame)
 
-    def _push_local_colors(self):
-        for controller in self._locals:
-            if self._is_synced(controller):
-                self._push_one(controller)
-
-    def _push_local(self, controller, frame):
-        # Every write to a local goes through here. A controller still inside its
-        # time budget gets the frame once the budget allows -- the newest frame
-        # queued for it wins -- so the final colour always lands.
-        cid = controller.card_id
+    def _push_device(self, device_id, frame):
+        # Every write to a USB device goes through here, ``frame`` an (r, g, b) with
+        # the brightness applied. A device still inside its time budget gets the
+        # frame once the budget allows -- the newest frame queued for it wins -- so
+        # the final colour always lands.
+        device = self._devices[device_id]
         now = time.monotonic()
-        wait = self._local_next.get(cid, 0.0) - now
+        wait = self._local_next.get(device_id, 0.0) - now
         if wait > 0:
-            self._local_pending[cid] = (controller, frame)
+            self._local_pending[device_id] = frame
             self._local_retry.start(int(wait * 1000) + 1)
             return
-        self._local_pending.pop(cid, None)
+        self._local_pending.pop(device_id, None)
         try:
-            controller.set_color(*frame)
+            device.set_color(*frame)
         except Exception:
-            log.exception("%s color send failed", controller.name)
-            self._set_status(f"{controller.name}: color send failed.")
-        self._local_next[cid] = now + LOCAL_BUDGET * (time.monotonic() - now)
+            log.exception("%s color send failed", device.name)
+            self._set_status(f"{device.name}: color send failed.")
+        self._local_next[device_id] = now + LOCAL_BUDGET * (time.monotonic() - now)
 
-    def _flush_local_pending(self):
-        for controller, frame in list(self._local_pending.values()):
-            self._push_local(controller, frame)
+    def _flush_device_pending(self):
+        for device_id, frame in list(self._local_pending.items()):
+            if device_id in self._devices:
+                self._push_device(device_id, frame)
 
-    def _set_local_power(self, on):
-        # Locals have no power frame: off sends black (and pauses the MSI rainbow),
-        # on re-applies the picker colour (or resumes the rainbow). Returns True if
-        # any synced controller was driven.
-        targets = [c for c in self._locals if self._is_synced(c)]
-        for controller in targets:
-            if on:
-                if controller is self._msi and self._msi_effect == "rainbow":
-                    self._effect_timer.start()
-                else:
-                    self._push_one(controller)
-            else:
-                if controller is self._msi:
-                    self._effect_timer.stop()
-                self._push_local(controller, (0, 0, 0, 100))
+    def _set_device_power(self, on):
+        # USB devices have no power frame: off sends black, on re-applies the
+        # picker colour. Returns True if any targeted device was driven.
+        targets = self._device_targets()
+        if on:
+            self._push_device_colors()
+        else:
+            for device_id in targets:
+                self._push_device(device_id, (0, 0, 0))
         return bool(targets)
-
-    def _on_local_sync_toggled(self, controller, checked):
-        self._local_sync[controller.card_id] = checked
-        self._save_state()
-        self._refresh_focus_ui()   # a synced local makes the All editor usable
-        if controller is self._msi:
-            if not checked:
-                self._effect_timer.stop()
-                return
-            if self._msi_effect == "rainbow":
-                if self._power_on:
-                    self._effect_timer.start()
-                return
-        if checked and self._power_on:  # off: it lights with the rest on power-on
-            self._push_one(controller)  # apply the current colour right away
-
-    def _on_msi_effect_changed(self, mode):
-        self._set_msi_effect(mode)
-
-    def _set_msi_effect(self, mode):
-        self.api.notify()
-        self._msi_effect = mode
-        self._fit_device_scroll()                  # the card grew/shrank its speed slider
-        if mode == "rainbow":
-            hue = self._base_color.hueF()          # continue from the current colour
-            self._effect_hue = hue if hue >= 0 else 0.0
-            if self._is_synced(self._msi) and self._power_on:   # off: _set_local_power starts it
-                self._effect_timer.start()
-        else:                                      # static: hand MSI back to the picker
-            self._effect_timer.stop()
-            if self._power_on:
-                self._push_one(self._msi)
-
-    def _effect_step(self):
-        # Map Speed 1..100 to the hue advance per tick.
-        return EFFECT_MIN_STEP + (self._effect_speed - 1) / 99 * (EFFECT_MAX_STEP - EFFECT_MIN_STEP)
-
-    def _effect_tick(self):
-        # MSI-only software rainbow: stream a hue sweep to the motherboard while the
-        # BLE strips and other USB devices keep the picker colour.
-        if self._msi is None or not self._is_synced(self._msi) or self._animating():
-            return
-        self._effect_hue = (self._effect_hue + self._effect_step()) % 1.0
-        color = QColor.fromHsvF(self._effect_hue, 1.0, 1.0)
-        try:
-            self._msi.set_color(color.red(), color.green(), color.blue(), self._brightness)
-        except Exception:
-            log.exception("MSI effect send failed")
 
     # ---- live drivers: effects, and plugins through api.begin_live ---------
 
@@ -2041,15 +1971,6 @@ class LedController(QWidget):
             btn.setChecked(m == (self._fx.mode if self._fx is not None else None))
         self._fx_speed_row.setVisible(self._fx is not None)
         self._fx_preview.setVisible(self._fx is not None)
-        self._refresh_effect_menu()
-
-    def _refresh_effect_menu(self):
-        # The MSI Static/Rainbow menu is moot while an effect or music drives every device.
-        card = self._local_cards.get(self._msi.card_id) if self._msi is not None else None
-        if card is not None:
-            reason = ("An effect is driving the lights." if self._fx is not None
-                      else f"{self._live_label} is driving the lights.")
-            card.set_effect_enabled(not self._animating(), f"{reason} Turn it off to pick an effect.")
 
     def _palette(self):
         return [QColor(h).getRgb()[:3] for h in self._presets]
@@ -2062,7 +1983,8 @@ class LedController(QWidget):
     def _drive(self, rgb):
         # One frame from the running effect / plugin, to the picker's targets.
         frame = (*rgb, self._brightness)
-        shown = QColor(*protocol.scale_rgb(*rgb, self._brightness))  # as the devices show it
+        scaled = protocol.scale_rgb(*rgb, self._brightness)   # as the devices show it
+        shown = QColor(*scaled)
         if self._fx is not None:
             self._fx_preview.set_color(shown)   # a plugin's own dot follows api.frame
         self.api.frame.emit(shown.name())
@@ -2071,10 +1993,8 @@ class LedController(QWidget):
             self._tray_rgb = rgb
             self._tray_next = time.monotonic() + TRAY_LIVE_INTERVAL_MS / 1000
             self._tray.setIcon(icon.make_icon(QColor(*rgb)))
-        if self._bulk:  # locals follow the All editor, as with the picker
-            for controller in self._locals:
-                if self._is_synced(controller):
-                    self._push_local(controller, frame)
+        for device_id in self._device_targets():
+            self._push_device(device_id, scaled)
         # BLE is slower than the ticks: keep only the newest frame and send it as
         # soon as the link is free (see LIVE_BLE_INTERVAL_MS), not at the next tick.
         self._live_frame = frame
@@ -2171,7 +2091,7 @@ class LedController(QWidget):
         self._desired.clear()
         self._idle = False
         self._idle_timer.stop()
-        self._focus = None            # nothing to edit individually once disconnected
+        self._focus.clear()           # nothing to edit individually once disconnected
         self._bulk = True
         targets = await self._manager.disconnect_all()
         for address in targets:
@@ -2279,11 +2199,11 @@ class LedController(QWidget):
 
     async def _set_power(self, on):
         # No readback: keep an optimistic state and only adopt it if the send
-        # actually reached a device. In All mode the local USB controllers are
-        # covered too; a focused BLE strip is driven alone.
+        # actually reached a device. The targeted USB devices are driven here, the
+        # strips through _broadcast.
         if not on and self._animating():
             self._stop_live()  # otherwise the next tick lights them again
-        local_ok = self._set_local_power(on) if self._bulk else False
+        local_ok = self._set_device_power(on)
         await self._wake()         # re-establish links if we released them to idle
         if [a for a in self._edit_targets() if self._manager.is_connected(a)]:
             ble_ok = await self._broadcast(
@@ -2291,7 +2211,7 @@ class LedController(QWidget):
             )
             if on and ble_ok and not self._animating():
                 # The strip wakes in its old colour: send the one picked while it was off.
-                # (Locals already got it from _set_local_power.)
+                # (The USB devices already got it from _set_device_power.)
                 c, level = self._base_color, self._brightness
                 await self._broadcast(lambda d: d.set_color(c.red(), c.green(), c.blue(), level), None)
         else:
@@ -2326,10 +2246,6 @@ class LedController(QWidget):
         self.raise_()
         self.activateWindow()
 
-    def _close_locals(self):
-        for controller in self._locals:
-            controller.close()
-
     def _quit(self):
         self._closing = True
         self._shutdown()
@@ -2338,8 +2254,7 @@ class LedController(QWidget):
         # Everything that must happen before main() hard-exits the process.
         self._save_state()
         self._settings.sync()              # main() exits without QSettings' own flush
-        self._plugin_host.stop_all()
-        self._close_locals()
+        self._plugin_host.stop_all()           # plugins close the USB devices they added
         if self._tray is not None:
             self._tray.hide()              # or Windows keeps a dead icon until hovered
         self._close_event.set()
@@ -2385,16 +2300,25 @@ class LedController(QWidget):
         self._brightness = self._settings.value("brightness", DEFAULT_BRIGHTNESS, type=int)
         # Per-device output: address -> {"color": "#rrggbb", "brightness": int, "power": bool}.
         self._states = json.loads(self._settings.value("states_json", "{}"))
-        self._local_sync = json.loads(self._settings.value("local_sync_json", "{}"))
-        if self._settings.contains("msi_sync"):  # migrate the pre-SteelSeries key, then drop it
-            if "msi-mystic-light" not in self._local_sync:
-                self._local_sync["msi-mystic-light"] = self._settings.value("msi_sync", False, type=bool)
-            self._settings.remove("msi_sync")
-        self._effect_speed = self._settings.value("effect_speed", DEFAULT_EFFECT_SPEED, type=int)
         self._fx_speed = self._settings.value("fx_speed", DEFAULT_EFFECT_SPEED, type=int)
         # All-mode power as last set (saved in _set_power). Default on: before this was
         # saved, launch always re-lit the USB devices, so keep that for upgraders.
         self._power_on = self._settings.value("power", True, type=bool)
+        # Before the MSI / SteelSeries plugins, the built-in USB devices had their own
+        # "synced" flags and mirrored the All colour: fold those into the selection,
+        # seed their per-device state from it, and drop the keys (effect_speed was
+        # the MSI card's own rainbow, gone with it).
+        synced = json.loads(self._settings.value("local_sync_json", "{}"))
+        if self._settings.contains("msi_sync"):
+            synced.setdefault("msi-mystic-light", self._settings.value("msi_sync", False, type=bool))
+        for device_id, on in synced.items():
+            if on:
+                self._selected.add(device_id)
+                self._states.setdefault(device_id, {
+                    "color": self._settings.value("color", DEFAULT_COLOR.name()),
+                    "brightness": self._brightness, "power": self._power_on})
+        for key in ("local_sync_json", "msi_sync", "effect_speed"):
+            self._settings.remove(key)
         self._plugins_on = set(json.loads(self._settings.value("plugins_json", "[]")))
         mode = self._settings.value("theme_mode", "auto")
         self._theme_mode = mode if mode in THEME_MODES else "auto"
@@ -2408,8 +2332,6 @@ class LedController(QWidget):
         self._settings.setValue("tray_color_icon", self._tray_color_icon)
         self._settings.setValue("brightness", self._brightness)
         self._settings.setValue("states_json", json.dumps(self._states))
-        self._settings.setValue("local_sync_json", json.dumps(self._local_sync))
-        self._settings.setValue("effect_speed", self._effect_speed)
         self._settings.setValue("fx_speed", self._fx_speed)
         self._settings.setValue("plugins_json", json.dumps(sorted(self._plugins_on)))
         self._settings.setValue("theme_mode", self._theme_mode)
